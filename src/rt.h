@@ -58,14 +58,23 @@ struct Err {
 
 #define GS_RET_OK return NULL
 
-#define VAL_IS_PTR(VAL) ((VAL) & 1)
-#define VAL2PTR(TY, VAL) ((TY *) ((uptr) (VAL) & ~1))
-#define PTR2VAL(PTR) ((Val) ((uptr) (PTR) | 1))
+#define VAL_TAG(VAL) ((VAL) & 3)
+#define VAL_IS_TAG(VAL, TAG) (VAL_TAG(VAL) == (TAG))
 
-#define VAL_IS_FIXNUM(VAL) (((VAL) & 4) == 0)
+#define VAL_IS_FIXNUM(VAL) VAL_IS_TAG(VAL, 0)
 #define VAL2UFIX(VAL) ((ufix) (VAL) >> 2)
 #define VAL2SFIX(VAL) ((ifix) VAL2UFIX(VAL))
 #define FIX2VAL(FIX) ((u64) (FIX) << 2)
+
+#define VAL_IS_PTR(VAL) VAL_IS_TAG(VAL, 1)
+#define VAL2PTR(TY, VAL) ((TY *) ((uptr) (VAL) & ~1))
+#define PTR2VAL(PTR) ((Val) ((uptr) (PTR) | 1))
+
+#define VAL_IS_CONST(VAL) VAL_IS_TAG(VAL, 3)
+#define VAL_TRUTHY(VAL) (((VAL) & 7) != 7)
+#define VAL_FALSE ((Val) 0x0f) // 0b1111
+#define VAL_TRUE ((Val) 0x0b) // 0b1011
+#define VAL_NIL ((Val) 0x07) // 0b0111
 
 typedef struct Closure Closure;
 #define GS_CLOSURE_ARGS Closure *self, u16 argc, Val *args, u16 retc, Val *rets

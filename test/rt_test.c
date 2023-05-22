@@ -14,7 +14,7 @@ static Err *gs_main() {
     gs_global_syms = table;
     {
       Insn insns[] = {
-        CONST_2, 0xcafe, 0xbabe,
+        CONST_4, 0xca, 0xfe, 0xba, 0xbe,
         RET, 1,
       };
       InsnSeq insnSeq = { insns, sizeof(insns) / sizeof(Insn), 0, 1 };
@@ -24,8 +24,8 @@ static Err *gs_main() {
     }
     {
       Insn insns0[] = {
-        CONST_2, 0xcafe, 0xbabe,
-        INTERN, 3, 'h'|('o'<<8), 'w',
+        CONST_4, 0xca, 0xfe, 0xba, 0xbe,
+        INTERN, 3, 'h', 'o', 'w',
         DYN_1, 3/*sym_deref*/,
         CALL, 1, 1,
         RET, 1,

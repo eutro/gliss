@@ -130,6 +130,11 @@ void gs_free_sym_table(SymTable *table) {
   gs_free(table, GS_ALLOC_META(SymTable, 1));
 }
 
+GS_TOP_CLOSURE(STATIC, symbol_trap_closure) {
+  (void) self, (void) argc, (void) args, (void) retc, (void) rets;
+  GS_FAILWITH("Called an undefined symbol", NULL);
+}
+
 Symbol *gs_intern(SymTable *table, Utf8Str name) {
   u64 hash = gs_hash_bytes(name);
   SymTableBucket *bucket = &table->buckets[(u32) hash % table->bucketc];
@@ -143,7 +148,7 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
 
   // not found, intern new
   Symbol *val = gs_alloc(GS_ALLOC_META(Symbol, 1));
-  *val = (Symbol) { name, FIX2VAL(0) };
+  *val = (Symbol) { name, PTR2VAL(&symbol_trap_closure) };
   if (it == end) {
     // realloc bucket
     u32 newCap = bucket->cap == 0 ? 1 : bucket->cap * 2;

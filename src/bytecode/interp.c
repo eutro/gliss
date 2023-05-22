@@ -49,10 +49,10 @@ Err *gs_interp(
   while (true) {
     switch (*ip++) {
     case NOP: break;
-    case BR: ip += *(i16 *)ip; break;
+    case BR: ip += *(i8 *) ip; break;
     case BR_IF: {
-      i16 off = *(i16 *)ip;
-      if (*--sp) {
+      i8 off = *(i8 *) ip;
+      if (VAL_TRUTHY(*--sp)) {
         ip += off;
       } else {
         ip++;
@@ -60,7 +60,7 @@ Err *gs_interp(
       break;
     }
     case RET: {
-      u16 count = *ip;
+      u8 count = *ip;
       sp -= count;
       GS_FAIL_IF(count > retc, "Returning too many values", NULL);
       memmove(rets, sp, count * sizeof(Val));
@@ -71,21 +71,29 @@ Err *gs_interp(
       break;
     }
     case CONST_2: {
-      u16 hi = *ip++;
-      u16 lo = *ip++;
+      u8 hi = *ip++;
+      u8 lo = *ip++;
       *sp++ = ((Val) hi << INSN_BITS) | (Val) lo;
       break;
     }
     case CONST_4: {
-      u16 hh = *ip++;
-      u16 hl = *ip++;
-      u16 lh = *ip++;
-      u16 ll = *ip++;
+      u8 hh = *ip++;
+      u8 hl = *ip++;
+      u8 lh = *ip++;
+      u8 ll = *ip++;
       *sp++ =
         ((Val) hh << (3 * INSN_BITS)) |
         ((Val) hl << (2 * INSN_BITS)) |
         ((Val) lh << INSN_BITS) |
         (Val) ll;
+      break;
+    }
+    case CONST_8: {
+      Val ret = 0;
+      for (int i = 8; i >= 0; --i) {
+        ret |= *ip++ << i;
+      }
+      *sp++ = ret;
       break;
     }
     case DYN_1: {
@@ -100,8 +108,8 @@ Err *gs_interp(
       break;
     }
     case CALL: {
-      u16 argc = *ip++;
-      u16 retc = *ip++;
+      u8 argc = *ip++;
+      u8 retc = *ip++;
       Closure *f = VAL2PTR(Closure, *--sp);
       sp -= argc;
       GS_TRY(f->call(f, argc, sp, retc, sp));
@@ -109,7 +117,7 @@ Err *gs_interp(
       break;
     }
     case INTERN: {
-      u16 len = *ip++;
+      u8 len = *ip++;
       Symbol *sym = gs_intern(
         gs_global_syms,
         (Utf8Str) {
@@ -117,7 +125,7 @@ Err *gs_interp(
           (u32) len
         }
       );
-      ip += (len + 1) / 2;
+      ip += len;
       *sp++ = PTR2VAL(sym);
       break;
     }
@@ -130,7 +138,7 @@ Err *gs_interp(
       break;
     }
     case ARG_REF: {
-      u16 arg = *ip++;
+      u8 arg = *ip++;
       if (arg >= argc) {
         GS_FAILWITH("Argument out of range", NULL);
       }

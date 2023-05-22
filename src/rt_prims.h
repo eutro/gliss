@@ -35,6 +35,7 @@ typedef u64 ufix;
 //
 //    t2 t1: 00    - fixnum
 //    t2 t1: 01    - pointer
+//    t2 t1: 11    - constant (any x with (x & 7) == 7 is falsy)
 
 #ifdef __cplusplus
   }

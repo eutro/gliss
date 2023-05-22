@@ -2,9 +2,9 @@
 
 #include "../rt_prims.h"
 
-typedef u16 Insn;
+typedef u8 Insn;
 
-#define INSN_BITS 16
+#define INSN_BITS 8
 
 typedef struct InsnSeq {
   Insn *insns;
@@ -24,9 +24,10 @@ typedef enum Opc {
   CONST_1 = 0x04,
   CONST_2 = 0x05,
   CONST_4 = 0x06,
+  CONST_8 = 0x07,
 
-  DYN_1 = 0x07,
-  DYN_2 = 0x08,
+  DYN_1 = 0x08,
+  DYN_2 = 0x09,
 
   CALL = 0x10,
 
