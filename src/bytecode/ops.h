@@ -16,18 +16,20 @@ typedef struct InsnSeq {
 typedef enum Opc {
   NOP = 0x00,
 
-  RET = 0x01,
+  DROP = 0x01,
 
-  BR = 0x02,
-  BR_IF = 0x03,
+  RET = 0x02,
 
-  CONST_1 = 0x04,
-  CONST_2 = 0x05,
-  CONST_4 = 0x06,
-  CONST_8 = 0x07,
+  BR = 0x03,
+  BR_IF = 0x04,
 
-  DYN_1 = 0x08,
-  DYN_2 = 0x09,
+  CONST_1 = 0x05,
+  CONST_2 = 0x06,
+  CONST_4 = 0x07,
+  CONST_8 = 0x08,
+
+  DYN_1 = 0x09,
+  DYN_2 = 0x0A,
 
   CALL = 0x10,
 

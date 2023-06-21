@@ -50,11 +50,13 @@ struct Err {
     }                                \
   } while(0)
 
-#define GS_TRY(CALL)                                                    \
+#define GS_TRY_MSG(CALL, MSG)                                               \
   do {                                                                  \
     Err *gs_try_res = (CALL);                                           \
-    GS_FAIL_IF(gs_try_res, #CALL, gs_try_res);                       \
+    GS_FAIL_IF(gs_try_res, MSG, gs_try_res);                       \
   } while(0)
+
+#define GS_TRY(CALL) GS_TRY_MSG(CALL, #CALL)
 
 #define GS_RET_OK return NULL
 

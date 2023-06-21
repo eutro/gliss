@@ -1,7 +1,7 @@
 #include "rt.h"
 #include "bytecode/interp.h"
 
-static Err *gs_main() {
+Err *gs_main() {
   GS_WITH_ALLOC(&gs_c_alloc) {
     SymTable *table = gs_alloc_sym_table();
 
@@ -24,9 +24,9 @@ static Err *gs_main() {
     }
     {
       Insn insns0[] = {
-        CONST_4, 0xca, 0xfe, 0xba, 0xbe,
         INTERN, 3, 'h', 'o', 'w',
         DYN_1, 3/*sym_deref*/,
+        CONST_4, 0xca, 0xfe, 0xba, 0xbe,
         CALL, 1, 1,
         RET, 1,
       };
@@ -48,15 +48,4 @@ static Err *gs_main() {
   }
 
   GS_RET_OK;
-}
-
-int main() {
-  Err *err;
-  err = gs_main();
-  if (err) {
-    GS_FILE_OUTSTREAM(gs_stderr, stderr);
-    err = gs_write_error(err, &gs_stderr);
-    if (err) return 2;
-    return 1;
-  }
 }

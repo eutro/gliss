@@ -14,7 +14,7 @@ endif()
 
 include(CTest)
 
-add_library(glissrt src/rt.c src/bytecode/interp.c)
+add_library(glissrt src/rt.c src/bytecode/interp.c src/bytecode/image.c)
 
 add_executable(gliss src/gliss.c)
 target_link_libraries(gliss glissrt)

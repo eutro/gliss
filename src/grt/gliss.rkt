@@ -4,33 +4,52 @@
 ;; racket -nyit ./gliss.rkt -f ./gstd.gs
 
 (require (for-syntax syntax/parse
-                     racket/base))
+                     racket/base
+                     syntax/transformer)
+         racket/pretty
+         racket/string)
 
 (provide symbol-set-value!
          symbol-set-macro!
          symbol-macro-value
-         quote eq? gensym
+         vm-check
+         eq? gensym
          box unbox + begin
          cons car cdr symbol?
          list? true false
-         apply integer? string?
-         raise dbg
+         apply number? string? char?
+         eof string->number
+
+         char-whitespace?
+         char->integer
+         < <= > >= =
+
+         list->string string->list string=?
+         string-prefix? string-ref
+         substring string-length
+
+         raise dbg nil
          (rename-out
           [let* let]
           [gl-if if]
           [gl-lambda lambda]
-          [set-box! box-set!]
-          [null nil]
-          [gl-app #%app])
+          [gl-quote quote]
+          [string->symbol intern]
+          [set-box! box-set!]))
 
+;; implementation details
+(provide (rename-out
+          [gl-app #%app])
          define-syntax
          #%top-interaction
          #%datum
          #%top
-         (for-syntax #%datum))
+         (for-syntax #%datum)
+         local-require)
 
-(define true #t)
-(define false #f)
+(define-syntax true (make-variable-like-transformer #'#t))
+(define-syntax false (make-variable-like-transformer #'#f))
+(define-syntax nil (make-variable-like-transformer #''()))
 
 (define gliss-readtable
   (make-readtable
@@ -39,6 +58,7 @@
    #\, #\space #f))
 
 (current-readtable gliss-readtable)
+(current-print pretty-print-handler)
 
 (define (dbg x)
   (writeln x)
@@ -55,7 +75,7 @@
   (define value (namespace-variable-value sym))
   (when macro?
     (define (stx-transformer stx)
-      (datum->syntax stx (apply value (cdr (syntax->datum stx)))))
+      (datum->syntax stx (apply value (cdr (syntax->datum stx))) stx))
     (eval `(define-syntax ,sym ,stx-transformer))
     (namespace-set-variable-value! (symbol-macro-name sym) value)))
 
@@ -83,13 +103,25 @@
   (syntax-parse stx
     [(_ {~optional name:id} params:gliss-params
         body ...)
+     #:with lambda-expr (syntax/loc stx
+                          (lambda params.as-rkt
+                            body ...))
      (syntax/loc stx
-       (letrec (({~? name fn}
-                 (lambda params.as-rkt
-                   body ...)))
+       (letrec (({~? name fn} lambda-expr))
          {~? name fn}))]))
 
 (define-syntax (gl-app stx)
   (syntax-parse stx
     [(_) (syntax/loc stx '())]
     [(_ . tl) (syntax/loc stx (#%app . tl))]))
+
+(define-syntax (gl-quote stx)
+  (syntax-parse stx
+    #:literals (true false nil)
+    [(_ true) (syntax/loc stx '#true)]
+    [(_ false) (syntax/loc stx '#false)]
+    [(_ nil) (syntax/loc stx '())]
+    [(_ x) (syntax/loc stx 'x)]))
+
+(define (vm-check sym)
+  (eq? sym 'racket))

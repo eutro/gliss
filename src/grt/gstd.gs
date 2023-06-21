@@ -1,11 +1,6 @@
 ;; literals: 'nil 'true 'false strings numbers
 
-;; primitives:
-;; symbol-set-value!
-;; quote lambda if let
-;; car cdr list? symbol?
-;; eq? gensym box unbox
-;; + begin box-set!
+;; primitives: see those provided in gliss.rkt
 
 (symbol-set-value! 'list (lambda list (& args) args))
 
@@ -59,12 +54,19 @@
       (foldl f (f start (car seq)) (cdr seq))
       start))
 
+(define (run! f seq)
+  (foldl (lambda (acc x) (f x) acc) nil seq))
+
 (define (concat-1 xs ys)
-  (if xs
-      (cons
-       (car xs)
-       (concat-1 (cdr xs) ys))
-      ys))
+  (if ys
+      ((lambda loop (xs ys)
+         (if xs
+             (cons
+              (car xs)
+              (loop (cdr xs) ys))
+             ys))
+       xs ys)
+      xs))
 
 (define (concat & ls)
   (foldr concat-1 nil ls))
@@ -154,6 +156,16 @@
       `(if ~(caar clauses)
            (begin ~@(cdar clauses))
            (cond ~@(cdr clauses)))))
+
+(defmacro (static-cond & clauses)
+  (if (nil? clauses)
+      nil
+      (if (vm-check (caar clauses))
+          `(begin ~@(cdar clauses))
+          `(static-cond ~@(cdr clauses)))))
+
+(defmacro (static-when pred & body)
+  `(static-cond (~pred ~@body)))
 
 (defmacro (and & exprs)
   (if exprs
@@ -270,3 +282,109 @@
   (assoc
    map key
    (apply f (get map key) args)))
+
+;; arithmetic
+
+(define (min-0 a b) (if (<= a b) a b))
+(define (min x & xs) (foldl min-0 x xs))
+(define (max-0 a b) (if (>= a b) a b))
+(define (max x & xs) (foldl max-0 x xs))
+
+(define (char<? & cs) (apply < (map char->integer cs)))
+(define (char>? & cs) (apply > (map char->integer cs)))
+(define (char<=? & cs) (apply <= (map char->integer cs)))
+(define (char>=? & cs) (apply >= (map char->integer cs)))
+
+(define (char-digit? c)
+  (char<=? #\0 c #\9))
+
+;; bytestrings
+
+(define (bytestring-slice bytes pos len)
+  (let ((bs (new-bytestring len)))
+    (bytestring-copy! bs 0 bytes pos len)
+    bs))
+
+(define (bytestring-resize bytes new-size)
+  (bytestring-slice bytes 0 (min new-size (bytestring-len bytes))))
+
+(define (list->bytestring ls)
+  (let ((bs (new-bytestring (count ls))))
+    ((lambda recur (i ls)
+       (when ls
+         (bytestring-set! bs i (car ls))
+         (recur (+ i 1) (cdr ls))))
+     0 ls)))
+
+;; bytevectors
+
+(define (new-bytevector initial-cap)
+  (list
+   (box 0)
+   (box (new-bytestring (or initial-cap 16)))))
+
+(define (bytevector-len bv)
+  (unbox (car bv)))
+
+(define (bytevector-set-len! bv len)
+  (box-set! (car bv) len))
+
+(define (bytevector-buf bv)
+  (unbox (cadr bv)))
+
+(define (bytevector-resize-buf! bv new-cap)
+  (let ((bx (cadr bv)))
+    (box-set! bx (bytestring-resize (unbox bv) new-cap))))
+
+(define (bytevector->bytestring bv)
+  (bytestring-resize (bytevector-buf bv) (bytevector-len bv)))
+
+(define (double-until n expected)
+  (if (>= n expected) n
+      (double-until (* 2 n) expected)))
+
+(define (bytevector-ensure! bv space)
+  (let ((buf (bytevector-buf bv))
+        (cap (bytestring-len buf))
+        (len (bytevector-len bv))
+        (space-rem (- cap len)))
+    (when (< space-rem space)
+      (let ((new-cap (double-until cap (+ len space))))
+        (bytevector-resize-buf! bv new-cap)))))
+
+(define (bytevector-append! bv bs)
+  (let ((n (bytestring-len bs)))
+    (bytevector-ensure! bv n)
+    (let ((buf (bytevector-buf bv))
+          (i (bytevector-len bv)))
+      (bytestring-copy! buf i bs 0 n)
+      (bytevector-set-len! bv (+ i n))))
+  bv)
+
+(define (bytevector-push! bv & bs)
+  (bytevector-append! bv (list->bytestring bs)))
+
+;; boxlists/iterators
+
+(define (iter-next! bl)
+  (let ((l (unbox bl)))
+    (if (nil? l)
+        false
+        (begin
+          (box-set! bl (cdr l))
+          (car l)))))
+
+(define (iter-peek bl)
+  (let ((l (unbox bl)))
+    (if (nil? l)
+        false
+        (car l))))
+
+(static-when
+ racket
+ (define (open-file file-name)
+   (local-require racket/base racket/port)
+   (box (call-with-input-file* file-name (λ (f) (port->list read-char f))))))
+
+(define (open-string str)
+  (box (string->list str)))

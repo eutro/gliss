@@ -33,6 +33,24 @@ InterpClosure gs_interp_closure(InsnSeq insns) {
   return (InterpClosure) {{gs_interp_closure_call}, insns};
 }
 
+static inline u16 read_u16(Insn **ip) {
+  u8 hi = *(*ip)++;
+  u8 lo = *(*ip)++;
+  return ((u16) hi << INSN_BITS) | (u16) lo;
+}
+
+static inline u32 read_u32(Insn **ip) {
+  u8 hh = *(*ip)++;
+  u8 hl = *(*ip)++;
+  u8 lh = *(*ip)++;
+  u8 ll = *(*ip)++;
+  return
+    ((u32) hh << (3 * INSN_BITS)) |
+    ((u32) hl << (2 * INSN_BITS)) |
+    ((u32) lh << INSN_BITS) |
+    (u32) ll;
+}
+
 Err *gs_interp(
   InsnSeq *insns /* must be verified */,
   u16 argc,
@@ -49,9 +67,12 @@ Err *gs_interp(
   while (true) {
     switch (*ip++) {
     case NOP: break;
-    case BR: ip += *(i8 *) ip; break;
+    case BR: {
+      ip += (i32) read_u32(&ip);
+      break;
+    }
     case BR_IF: {
-      i8 off = *(i8 *) ip;
+      i32 off = (i32) read_u32(&ip);
       if (VAL_TRUTHY(*--sp)) {
         ip += off;
       } else {
@@ -71,21 +92,11 @@ Err *gs_interp(
       break;
     }
     case CONST_2: {
-      u8 hi = *ip++;
-      u8 lo = *ip++;
-      *sp++ = ((Val) hi << INSN_BITS) | (Val) lo;
+      *sp++ = (Val) read_u16(&ip);
       break;
     }
     case CONST_4: {
-      u8 hh = *ip++;
-      u8 hl = *ip++;
-      u8 lh = *ip++;
-      u8 ll = *ip++;
-      *sp++ =
-        ((Val) hh << (3 * INSN_BITS)) |
-        ((Val) hl << (2 * INSN_BITS)) |
-        ((Val) lh << INSN_BITS) |
-        (Val) ll;
+      *sp++ = (Val) read_u32(&ip);
       break;
     }
     case CONST_8: {
@@ -110,9 +121,9 @@ Err *gs_interp(
     case CALL: {
       u8 argc = *ip++;
       u8 retc = *ip++;
-      Closure *f = VAL2PTR(Closure, *--sp);
       sp -= argc;
-      GS_TRY(f->call(f, argc, sp, retc, sp));
+      Closure *f = VAL2PTR(Closure, *--sp);
+      GS_TRY(f->call(f, argc, sp + 1, retc, sp));
       sp += retc;
       break;
     }
