@@ -222,7 +222,7 @@
                      ~@body))
                   (else cs))))
             cases)
-         [else nil]))))
+         (else nil)))))
 
 (defmacro (-> x & forms)
   ((lambda recur (x forms)

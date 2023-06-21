@@ -7,3 +7,8 @@ add_executable(image_test image_test.c test_driver.c)
 target_include_directories(image_test PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(image_test glissrt)
 add_test(NAME "Image" COMMAND image_test)
+
+add_executable(grt_test grt_test.c test_driver.c)
+target_include_directories(grt_test PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(grt_test glissrt)
+add_test(NAME "Gliss Runtime" COMMAND grt_test)

@@ -60,8 +60,8 @@ struct ConstLambda {
 // an interpretable block of code
 typedef struct CodeInfo {
   u32le len;
-  u32le locals;
   u32le maxStack;
+  u32le locals;
   u8 code[1]; // padded to multiple of 4
 } CodeInfo;
 

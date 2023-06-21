@@ -74,6 +74,7 @@ struct Err {
 
 #define VAL_IS_CONST(VAL) VAL_IS_TAG(VAL, 3)
 #define VAL_TRUTHY(VAL) (((VAL) & 7) != 7)
+#define VAL_FALSY(VAL) (((VAL) & 7) == 7)
 #define VAL_FALSE ((Val) 0x0F) // 0b1111
 #define VAL_TRUE ((Val) 0x0B) // 0b1011
 #define VAL_NIL ((Val) 0x07) // 0b0111

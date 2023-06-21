@@ -115,8 +115,8 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
           GS_TRY_MSG(skipN(&rd, paddedLen), "byte data");
           break;
         }
-        case CNumber: {
-          GS_TRY_MSG(skipN(&rd, sizeof(u64)), "number value");
+        case CDirect: {
+          GS_TRY_MSG(skipN(&rd, sizeof(u64)), "direct value");
           break;
         }
         default: {
