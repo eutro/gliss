@@ -74,9 +74,13 @@ struct Err {
 
 #define VAL_IS_CONST(VAL) VAL_IS_TAG(VAL, 3)
 #define VAL_TRUTHY(VAL) (((VAL) & 7) != 7)
-#define VAL_FALSE ((Val) 0x0f) // 0b1111
-#define VAL_TRUE ((Val) 0x0b) // 0b1011
+#define VAL_FALSE ((Val) 0x0F) // 0b1111
+#define VAL_TRUE ((Val) 0x0B) // 0b1011
 #define VAL_NIL ((Val) 0x07) // 0b0111
+
+#define VAL_IS_CHAR(VAL) (VAL_IS_CONST(VAL) && (((VAL) & 0xFFFB) == 0))
+#define VAL2CHAR(VAL) ((u32) ((ufix) (VAL) >> 4))
+#define CHAR2VAL(VAL) ((((Val) (VAL)) << 4) | 3)
 
 typedef struct Closure Closure;
 #define GS_CLOSURE_ARGS Closure *self, u16 argc, Val *args, u16 retc, Val *rets

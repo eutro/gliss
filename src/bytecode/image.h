@@ -19,7 +19,7 @@ typedef u32le CodeRef;
 enum ConstTy {
   CLambda,
   CList,
-  CNumber,
+  CDirect,
   CSymbol,
   CString,
 };
@@ -35,9 +35,9 @@ struct ConstBytevec {
   u32le len;
   u8 data[1]; // padded to multiple of 4
 };
-// a number, only the bottom 63 bits can be used, interpreted as
-// signed at runtime
-struct ConstNumber {
+// a direct constant, which fits in a single machine word; like
+// fixnums or global constants (nil, eof, booleans)
+struct ConstDirect {
   ConstInfo hd;
   u64le value;
 };
@@ -80,7 +80,7 @@ enum Sections {
 
 typedef struct Image {
   u8 *buf;
-  // u32 magic: "gls\0"
+  // u32 magic: "gls\0" = 0x00736c67 = 7564391
   u32 version; // 1
   // constant table
   struct {

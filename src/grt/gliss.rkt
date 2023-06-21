@@ -14,7 +14,7 @@
          symbol-macro-value
          vm-check
          eq? gensym
-         box unbox + begin
+         box unbox begin
          cons car cdr symbol?
          list? true false
          apply number? string? char?
@@ -22,11 +22,16 @@
 
          char-whitespace?
          char->integer
+
          < <= > >= =
+         + - / * modulo
+         bitwise-and bitwise-ior
+         arithmetic-shift
 
          list->string string->list string=?
          string-prefix? string-ref
          substring string-length
+         symbol->bytestring
 
          raise dbg nil
          (rename-out
@@ -35,7 +40,12 @@
           [gl-lambda lambda]
           [gl-quote quote]
           [string->symbol intern]
-          [set-box! box-set!]))
+          [set-box! box-set!]
+          [make-bytes new-bytestring]
+          [bytes-length bytestring-length]
+          [bytes-copy! bytestring-copy!]
+          [bytes-set! bytestring-set!]
+          [string->bytes/utf-8 string->bytestring]))
 
 ;; implementation details
 (provide (rename-out
@@ -125,3 +135,6 @@
 
 (define (vm-check sym)
   (eq? sym 'racket))
+
+(define (symbol->bytestring sym)
+  (string->bytes/utf-8 (symbol->string sym)))

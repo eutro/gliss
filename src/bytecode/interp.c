@@ -71,9 +71,9 @@ Err *gs_interp(
       ip += (i32) read_u32(&ip);
       break;
     }
-    case BR_IF: {
+    case BR_IF_NOT: {
       i32 off = (i32) read_u32(&ip);
-      if (VAL_TRUTHY(*--sp)) {
+      if (VAL_FALSY(*--sp)) {
         ip += off;
       } else {
         ip++;

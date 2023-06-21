@@ -111,6 +111,8 @@
 (define (cdddar c) (cdr (cddar c)))
 (define (cddddr c) (cdr (cdddr c)))
 
+(define (rcons pair x) (cons x pair))
+
 (symbol-set-macro!
  (define (defmacro header & body)
    (let ((get-name
@@ -260,6 +262,13 @@
          n))
    0 xs))
 
+(define (reverse xs)
+  ((lambda recur (xs tl)
+     (if xs
+         (recur (cdr xs) (cons (car xs) tl))
+         tl))
+   xs nil))
+
 ;; TODO implement maps
 
 (define empty-map nil)
@@ -298,6 +307,16 @@
 (define (char-digit? c)
   (char<=? #\0 c #\9))
 
+(define (inc x) (+ x 1))
+(define (dec x) (- x 1))
+
+;; boxes
+
+(define (box-swap! bx f & args)
+  (let ((new-v (apply f (unbox bx) args)))
+    (box-set! bx new-v)
+    new-v))
+
 ;; bytestrings
 
 (define (bytestring-slice bytes pos len)
@@ -306,7 +325,15 @@
     bs))
 
 (define (bytestring-resize bytes new-size)
-  (bytestring-slice bytes 0 (min new-size (bytestring-len bytes))))
+  (let ((old-size (bytestring-length bytes)))
+    (cond
+      ((< new-size old-size)
+       (bytestring-slice bytes 0 new-size))
+      ((> new-size old-size)
+       (let ((bs (new-bytestring new-size)))
+         (bytestring-copy! bs 0 bytes 0 old-size)
+         bs))
+      (else bytes))))
 
 (define (list->bytestring ls)
   (let ((bs (new-bytestring (count ls))))
@@ -314,7 +341,8 @@
        (when ls
          (bytestring-set! bs i (car ls))
          (recur (+ i 1) (cdr ls))))
-     0 ls)))
+     0 ls)
+    bs))
 
 ;; bytevectors
 
@@ -323,7 +351,7 @@
    (box 0)
    (box (new-bytestring (or initial-cap 16)))))
 
-(define (bytevector-len bv)
+(define (bytevector-length bv)
   (unbox (car bv)))
 
 (define (bytevector-set-len! bv len)
@@ -333,30 +361,31 @@
   (unbox (cadr bv)))
 
 (define (bytevector-resize-buf! bv new-cap)
-  (let ((bx (cadr bv)))
-    (box-set! bx (bytestring-resize (unbox bv) new-cap))))
+  (box-swap! (cadr bv) bytestring-resize new-cap))
 
 (define (bytevector->bytestring bv)
-  (bytestring-resize (bytevector-buf bv) (bytevector-len bv)))
+  (bytestring-resize (bytevector-buf bv) (bytevector-length bv)))
 
 (define (double-until n expected)
   (if (>= n expected) n
-      (double-until (* 2 n) expected)))
+      (double-until
+       (if (= 0 n) 4 (* 2 n))
+       expected)))
 
 (define (bytevector-ensure! bv space)
   (let ((buf (bytevector-buf bv))
-        (cap (bytestring-len buf))
-        (len (bytevector-len bv))
+        (cap (bytestring-length buf))
+        (len (bytevector-length bv))
         (space-rem (- cap len)))
     (when (< space-rem space)
       (let ((new-cap (double-until cap (+ len space))))
         (bytevector-resize-buf! bv new-cap)))))
 
 (define (bytevector-append! bv bs)
-  (let ((n (bytestring-len bs)))
+  (let ((n (bytestring-length bs)))
     (bytevector-ensure! bv n)
     (let ((buf (bytevector-buf bv))
-          (i (bytevector-len bv)))
+          (i (bytevector-length bv)))
       (bytestring-copy! buf i bs 0 n)
       (bytevector-set-len! bv (+ i n))))
   bv)
@@ -382,9 +411,17 @@
 
 (static-when
  racket
+
  (define (open-file file-name)
    (local-require racket/base racket/port)
-   (box (call-with-input-file* file-name (λ (f) (port->list read-char f))))))
+   (box (call-with-input-file* file-name (λ (f) (port->list read-char f)))))
+
+ (define (write-file file-name data)
+   (local-require racket/base racket/port)
+   (call-with-output-file*
+     file-name
+     (λ (f) (write-bytes data f))
+     #:exists 'replace)))
 
 (define (open-string str)
   (box (string->list str)))
