@@ -1,5 +1,6 @@
 #include "image.h"
 #include "../rt.h"
+#include "interp.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -35,19 +36,19 @@ static Err *nextN(ImageReader *rd, anyptr out, size_t count) {
   GS_RET_OK;
 }
 
-#define nextRaw(rd, var) nextN(rd, var, sizeof(*var))
+#define next_raw(rd, var) nextN(rd, var, sizeof(*var))
 
-static Err *nextU32(ImageReader *rd, u32le *out) {
-  return nextRaw(rd, out);
+static Err *next_u32(ImageReader *rd, u32le *out) {
+  return next_raw(rd, out);
 }
 
 #define U32_ALIGN 4
 
-u32 padToAlign(u32 n) {
+static u32 pad_to_align(u32 n) {
   return (n + U32_ALIGN - 1) & -U32_ALIGN;
 }
 
-Err *indexImage(u32 len, u8 *buf, Image *ret) {
+Err *gs_index_image(u32 len, u8 *buf, Image *ret) {
   // zero out tables
   memset(ret, 0, sizeof(Image));
 
@@ -60,10 +61,10 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
   u32le val;
   u32le expectedMagic;
   memcpy(&expectedMagic, "gls\0", 4);
-  GS_TRY_MSG(nextU32(&rd, &val), "magic header");
+  GS_TRY_MSG(next_u32(&rd, &val), "magic header");
   GS_FAIL_IF(val.raw != expectedMagic.raw, "missing magic header", NULL);
 
-  GS_TRY_MSG(nextU32(&rd, &val), "version");
+  GS_TRY_MSG(next_u32(&rd, &val), "version");
   ret->version = get32le(val);
   GS_FAIL_IF(ret->version != 1, "unknown version", NULL);
 
@@ -72,13 +73,13 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
   u32 minCodeLen = 0;
 
   while (rd.pos < rd.len) {
-    GS_TRY_MSG(nextU32(&rd, &val), "section number");
+    GS_TRY_MSG(next_u32(&rd, &val), "section number");
     u32 section = get32le(val);
     GS_FAIL_IF(section <= lastSection, "out of order sections", NULL);
     lastSection = section;
     switch (section) {
     case SecConstants: {
-      GS_TRY_MSG(nextU32(&rd, &val), "constant count");
+      GS_TRY_MSG(next_u32(&rd, &val), "constant count");
       u32 constCount = ret->constants.len = get32le(val);
       ConstInfo **values
         = ret->constants.values
@@ -96,7 +97,7 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
         }
           // fall through
         case CList: {
-          GS_TRY_MSG(nextU32(&rd, &val), "vector length");
+          GS_TRY_MSG(next_u32(&rd, &val), "vector length");
           u32 elts = get32le(val);
           GS_FAIL_IF(elts > UINT32_MAX / sizeof(u32), "integer overflow", NULL);
           ConstRef *refs = (ConstRef *) (rd.buf + rd.pos);
@@ -108,9 +109,9 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
         }
         case CString:
         case CSymbol: {
-          GS_TRY_MSG(nextU32(&rd, &val), "bytes length");
+          GS_TRY_MSG(next_u32(&rd, &val), "bytes length");
           u32 len = get32le(val);
-          u32 paddedLen = padToAlign(len);
+          u32 paddedLen = pad_to_align(len);
           GS_FAIL_IF(paddedLen < len, "integer overflow", NULL);
           GS_TRY_MSG(skipN(&rd, paddedLen), "byte data");
           break;
@@ -127,7 +128,7 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
       break;
     }
     case SecCodes: {
-      GS_TRY_MSG(nextU32(&rd, &val), "code count");
+      GS_TRY_MSG(next_u32(&rd, &val), "code count");
       u32 len = ret->codes.len = get32le(val);
       CodeInfo **values
         = ret->codes.values
@@ -137,7 +138,7 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
         values[i] = (CodeInfo *) (rd.buf + rd.pos);
         GS_TRY_MSG(skipN(&rd, sizeof(u32) * 3 /* len, locals, maxStack */), "code header");
         u32 len = get32le(values[i]->len);
-        u32 paddedLen = padToAlign(len);
+        u32 paddedLen = pad_to_align(len);
         GS_FAIL_IF(paddedLen < len, "integer overflow", NULL);
         GS_TRY_MSG(skipN(&rd, paddedLen), "code instructions");
         // TODO validate code?
@@ -145,7 +146,7 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
       break;
     }
     case SecBindings: {
-      GS_TRY_MSG(nextU32(&rd, &val), "binding count");
+      GS_TRY_MSG(next_u32(&rd, &val), "binding count");
       u32 len = ret->bindings.len = get32le(val);
       ret->bindings.pairs = (BindingInfo *) (rd.buf + rd.pos);
       GS_FAIL_IF(len > UINT32_MAX / sizeof(BindingInfo), "integer overflow", NULL);
@@ -162,7 +163,7 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
       break;
     }
     case SecStart: {
-      GS_TRY(nextU32(&rd, &val));
+      GS_TRY(next_u32(&rd, &val));
       u32 codeRef = get32le(val);
       GS_FAIL_IF(codeRef >= ret->codes.len, "start function out of bounds", NULL);
       GS_FAIL_IF(codeRef == UINT32_MAX, "integer overflow", NULL);
@@ -177,4 +178,76 @@ Err *indexImage(u32 len, u8 *buf, Image *ret) {
   GS_FAIL_IF(minCodeLen > ret->codes.len, "code reference out of bounds", NULL);
 
   GS_RET_OK;
+}
+
+static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
+  switch (get32le(info->ty)) {
+  case CDirect: {
+    *out = get64le(((struct ConstDirect *) info)->value);
+    break;
+  }
+  case CSymbol: {
+    struct ConstBytevec *bv = (struct ConstBytevec *) info;
+    *out = PTR2VAL(
+      gs_intern(
+        gs_global_syms,
+        (Utf8Str) {
+          bv->data,
+          get32le(bv->len)
+        }
+      )
+    );
+    break;
+  }
+  case CString: {
+    struct ConstBytevec *bv = (struct ConstBytevec *) info;
+    Utf8Str *theStr = gs_alloc(GS_ALLOC_META(Utf8Str, 1));
+    GS_FAIL_IF(!theStr, "Failed allocation", NULL);
+    theStr->len = get32le(bv->len);
+    theStr->bytes = bv->data;
+    *out = PTR2VAL(theStr);
+    break;
+  }
+  default: GS_FAILWITH("Unknown constant type", NULL);
+  }
+
+  GS_RET_OK;
+}
+
+Err *gs_bake_image(Image *img) {
+  if (!img->constants.baked) {
+    img->constants.baked =
+      gs_alloc(GS_ALLOC_META(Val, img->constants.len));
+    for (u32 i = 0; i < img->constants.len; ++i) {
+      GS_TRY(
+        bake_constant(
+          img->constants.baked,
+          img->constants.values[i],
+          &img->constants.baked[i]
+        )
+      );
+    }
+  }
+
+  GS_RET_OK;
+}
+
+void gs_free_image(Image *img) {
+  gs_free(
+    img->constants.values,
+    GS_ALLOC_META(ConstInfo *, img->constants.len)
+  );
+  gs_free(
+    img->constants.baked,
+    GS_ALLOC_META(Val, img->constants.len)
+  );
+  gs_free(
+    img->codes.values,
+    GS_ALLOC_META(CodeInfo *, img->codes.len)
+  );
+  gs_free(
+    img->bindings.pairs,
+    GS_ALLOC_META(BindingInfo, img->bindings.len)
+  );
+  memset(img, 0, sizeof(Image));
 }

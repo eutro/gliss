@@ -7,11 +7,6 @@
 #define GS_C_STDIO
 #define GS_C_ALLOC
 
-#ifdef __cplusplus
-extern "C" {
-  namespace gliss {
-#endif
-
 typedef struct Bytes {
   u8 *bytes;
   u32 len;
@@ -89,6 +84,7 @@ struct Closure {
   Err *(*call)(GS_CLOSURE_ARGS);
   // extra data
 };
+Err *gs_call(GS_CLOSURE_ARGS);
 
 #define GS_CHECK_ARG_ARITY(ARGS)                                     \
   GS_FAIL_IF(argc != (ARGS), "bad argument arity, expected: " #ARGS, NULL)
@@ -178,6 +174,7 @@ static inline void gs_free(anyptr ptr, AllocMeta meta) {
 typedef struct Symbol {
   Utf8Str name;
   Val value;
+  bool isMacro;
 } Symbol;
 
 typedef struct SymTableBucket {
@@ -197,8 +194,4 @@ int gs_bytes_cmp(Bytes lhs, Bytes rhs);
 SymTable *gs_alloc_sym_table(void);
 void gs_free_sym_table(SymTable *table);
 Symbol *gs_intern(SymTable *table, Utf8Str name);
-
-#ifdef __cplusplus
-  }
-}
-#endif
+Symbol *gs_reverse_lookup(SymTable *table, Val value);

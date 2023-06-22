@@ -15,7 +15,12 @@
     ((#\") (iter-next! s) (read-string-tail s))
     ((#\') (iter-next! s) (list 'quote (read s)))
     ((#\`) (iter-next! s) (list 'quasiquote (read s)))
-    ((#\~) (iter-next! s) (list 'unquote (read s)))
+    ((#\~)
+     (iter-next! s)
+     (list (if (eq? #\@ (iter-peek s))
+               (begin (iter-next! s) 'unquote-splicing)
+               'unquote)
+           (read s)))
     (else (read-token s))))
 
 (define (read-all s)
@@ -537,11 +542,10 @@
 (define opc-ret 2)
 (define opc-br 3)
 (define opc-br-if-not 4)
-(define opc-ldc 9)
-(define opc-dyn-1 10)
-(define opc-dyn-2 11)
-(define opc-lambda 12)
-(define opc-call 16)
+(define opc-ldc 5)
+(define opc-sym-deref 6)
+(define opc-lambda 7)
+(define opc-call 8)
 (define opc-local-ref 18)
 (define opc-local-set 19)
 (define opc-arg-ref 20)
@@ -549,8 +553,6 @@
 (define opc-this-ref 22)
 (define opc-this-ref 23)
 (define opc-closure-ref 24)
-
-(define dyn-sym-deref 3)
 
 (define (cbw-emit-ldc! cw iw what)
   (let ((bv (car cw)))
@@ -569,7 +571,7 @@
          (case (car what)
            ((top)
             (cbw-emit-ldc! cw iw (cadr what))
-            (bytevector-push! bv opc-dyn-1 dyn-sym-deref))
+            (bytevector-push! bv opc-sym-deref))
            ((arg rest-arg var closed)
             (bytevector-push!
              bv

@@ -3,6 +3,10 @@
 // for memcmp
 #include <string.h>
 
+Err *gs_call(GS_CLOSURE_ARGS) {
+  return self->call(self, argc, args, retc, rets);
+}
+
 #ifdef GS_C_STDIO
 static GS_CLOSURE(stdio_write) {
   GS_CHECK_ARITY(1, 0);
@@ -32,14 +36,7 @@ OutStream gs__file_outstream(FILE *file, struct GS_FOSBuf *buf) {
 Err *gs_write_error(Err *err, OutStream *stream) {
   Val arg;
   Err *slow = err, *fast = err;
-  do {
-    if (fast) {
-      fast = fast->cause;
-      if (fast) {
-        fast = fast->cause;
-      }
-    }
-
+  while (slow) {
     Utf8Str msgHere;
 
     arg = PTR2VAL(&slow->file);
@@ -58,8 +55,19 @@ Err *gs_write_error(Err *err, OutStream *stream) {
     arg = PTR2VAL(&msgHere);
     GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
 
+    if (fast) {
+      fast = fast->cause;
+      if (fast) {
+        fast = fast->cause;
+      }
+    }
+    if (slow == fast) {
+      msgHere = GS_UTF8_CSTR("  (cycle detected)\n");
+      GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
+      break;
+    }
     slow = slow->cause;
-  } while (slow && slow != fast);
+  }
   GS_TRY(stream->flush->call(stream->flush, 0, NULL, 0, NULL));
   GS_RET_OK;
 }
@@ -100,7 +108,7 @@ u64 gs_hash_bytes(Bytes bytes) {
 }
 
 int gs_bytes_cmp(Bytes lhs, Bytes rhs) {
-  if (lhs.len != rhs.len) return false;
+  if (lhs.len != rhs.len) return lhs.len < rhs.len ? -1 : 1;
   return memcmp(lhs.bytes, rhs.bytes, (size_t) lhs.len);
 }
 
@@ -148,7 +156,11 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
 
   // not found, intern new
   Symbol *val = gs_alloc(GS_ALLOC_META(Symbol, 1));
-  *val = (Symbol) { name, PTR2VAL(&symbol_trap_closure) };
+  *val = (Symbol) {
+    name,
+    PTR2VAL(&symbol_trap_closure),
+    false, // not macro
+  };
   if (it == end) {
     // realloc bucket
     u32 newCap = bucket->cap == 0 ? 1 : bucket->cap * 2;
@@ -163,4 +175,17 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
   table->size++;
 
   return val;
+}
+
+Symbol *gs_reverse_lookup(SymTable *table, Val value) {
+  for (u32 i = 0; i < table->bucketc; ++i) {
+    SymTableBucket *bucket = table->buckets + i;
+    for (u32 j = 0; j < bucket->len; ++j) {
+      Symbol *sym = bucket->syms[j];
+      if (sym->value == value) {
+        return sym;
+      }
+    }
+  }
+  return NULL;
 }

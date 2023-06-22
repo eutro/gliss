@@ -1,12 +1,7 @@
 #include "bytecode/image.h"
 
-u32 padToAlign(u32 n);
-
 Err *gs_main(void) {
   Image img;
-
-  GS_FAIL_IF(padToAlign(0) != 0, "failed padding 0", NULL);
-  GS_FAIL_IF(padToAlign(1) != 4, "failed padding 1", NULL);
 
   alignas(u32) u8 buf[] = {
     'g', 'l', 's', '\0', // magic header
@@ -39,7 +34,7 @@ Err *gs_main(void) {
     0x04, 0x00, 0x00, 0x00, // start
     0x00, 0x00, 0x00, 0x00, //   code
   };
-  GS_TRY(indexImage(sizeof(buf), buf, &img));
+  GS_TRY(gs_index_image(sizeof(buf), buf, &img));
 
   GS_RET_OK;
 }

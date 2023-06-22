@@ -1,9 +1,11 @@
 #include "bytecode/image.h"
 #include "bytecode/interp.h"
+#include "bytecode/primitives.h"
 #include <stdio.h>
 
 Err *gs_main() {
   SymTable *table = gs_alloc_sym_table();
+  GS_TRY(gs_add_primitives(table));
   gs_global_syms = table;
 
   u32 size = 1024;
@@ -39,9 +41,16 @@ Err *gs_main() {
   fclose(file);
 
   Image img;
-  GS_TRY(indexImage(offset, buf, &img));
+  GS_TRY(gs_index_image(offset, buf, &img));
+  // gs_stderr_dump(&img);
+
+  GS_FAIL_IF(!img.start.code, "No start function", NULL);
+  InterpClosure start = gs_interp_closure(&img, img.start.code - 1);
+  Val ret;
+  GS_TRY(gs_call((Closure *) &start, 0, NULL, 1, &ret));
 
   gs_free(buf, allocMeta);
+  gs_free_image(&img);
   gs_free_sym_table(table);
 
   GS_RET_OK;

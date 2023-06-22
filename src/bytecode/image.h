@@ -57,12 +57,16 @@ struct ConstLambda {
   } captured;
 };
 
+typedef u8 Insn;
+
+#define INSN_BITS 8
+
 // an interpretable block of code
 typedef struct CodeInfo {
   u32le len;
   u32le maxStack;
   u32le locals;
-  u8 code[1]; // padded to multiple of 4
+  Insn code[1]; // padded to multiple of 4
 } CodeInfo;
 
 // an association of a symbol with a binding
@@ -86,6 +90,7 @@ typedef struct Image {
   struct {
     u32 len;
     ConstInfo **values;
+    Val *baked;
   } constants;
   // code table
   struct {
@@ -105,4 +110,9 @@ typedef struct Image {
   } start;
 } Image;
 
-Err *indexImage(u32 len, u8 *buf, Image *ret);
+Err *gs_index_image(u32 len, u8 *buf, Image *ret);
+Err *gs_bake_image(Image *img);
+void gs_free_image(Image *img);
+
+void gs_stderr_dump_code(Image *img, CodeInfo *ci);
+void gs_stderr_dump(Image *img);

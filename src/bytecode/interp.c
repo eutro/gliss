@@ -1,72 +1,49 @@
 #include "interp.h"
 #include "../rt.h"
+#include "ops.h"
+#include "le_unaligned.h"
 
 #include <string.h> // memmove
 
-#define DYN1OP(NAME, EXPR) static Val dyn1op_##NAME(Val x) { return (EXPR); }
-#include "dyn1ops.h"
-#undef DYN1OP
-
-#define DYN1OP(NAME, _EXPR) dyn1op_##NAME,
-static Dyn1Op dyn1ops[] = {
-  #include "dyn1ops.h"
-};
-#undef DYN1OP
-
-#define DYN2OP(NAME, EXPR) static Val dyn2op_##NAME(Val x, Val y) { return (EXPR); }
-#include "dyn2ops.h"
-#undef DYN2OP
-#define DYN2OP(NAME, _EXPR) dyn2op_##NAME,
-static Dyn2Op dyn2ops[] = {
-  #include "dyn2ops.h"
-};
-#undef DYN2OP
-
 SymTable *gs_global_syms;
+struct ShadowStack gs_shadow_stack;
 
-static Err *gs_interp_closure_call(GS_CLOSURE_ARGS) {
-  InsnSeq *insns = &((InterpClosure *) self)->insns;
-  return gs_interp(insns, argc, args, retc, rets);
+static Err *gs_interp_closure_call(GS_CLOSURE_ARGS);
+
+InterpClosure gs_interp_closure(Image *img, u32 codeRef) {
+  return (InterpClosure) {
+    {gs_interp_closure_call},
+    img,
+    codeRef,
+  };
 }
 
-InterpClosure gs_interp_closure(InsnSeq insns) {
-  return (InterpClosure) {{gs_interp_closure_call}, insns};
-}
+#include "le_unaligned.h"
 
-static inline u16 read_u16(Insn **ip) {
-  u8 hi = *(*ip)++;
-  u8 lo = *(*ip)++;
-  return ((u16) hi << INSN_BITS) | (u16) lo;
-}
-
-static inline u32 read_u32(Insn **ip) {
-  u8 hh = *(*ip)++;
-  u8 hl = *(*ip)++;
-  u8 lh = *(*ip)++;
-  u8 ll = *(*ip)++;
-  return
-    ((u32) hh << (3 * INSN_BITS)) |
-    ((u32) hl << (2 * INSN_BITS)) |
-    ((u32) lh << INSN_BITS) |
-    (u32) ll;
-}
-
-Err *gs_interp(
-  InsnSeq *insns /* must be verified */,
+static Err *gs_interp(
+  InterpClosure *self, // must be verified
   u16 argc,
   Val *args,
   u16 retc,
   Val *rets
 ) {
-  Val stack[insns->maxStack];
-  Val locals[insns->locals];
+  GS_FAIL_IF(gs_shadow_stack.depth >= GS_STACK_MAX_DEPTH, "Stack overflow", NULL);
 
-  Insn *ip = insns->insns;
+  GS_TRY(gs_bake_image(self->img));
+  CodeInfo *insns = self->img->codes.values[self->codeRef];
+  Val stack[get32le(insns->maxStack)];
+  Val locals[get32le(insns->locals)];
+
+  Insn *ip = insns->code;
   Val *sp = stack;
   // no end checking if the insns are verified
   while (true) {
     switch (*ip++) {
     case NOP: break;
+    case DROP: {
+      --sp;
+      break;
+    }
     case BR: {
       ip += (i32) read_u32(&ip);
       break;
@@ -87,35 +64,24 @@ Err *gs_interp(
       memmove(rets, sp, count * sizeof(Val));
       return NULL;
     }
-    case CONST_1: {
-      *sp++ = (Val) *ip++;
+    case LDC: {
+      u32 idx = read_u32(&ip);
+      *sp++ = self->img->constants.baked[idx];
       break;
     }
-    case CONST_2: {
-      *sp++ = (Val) read_u16(&ip);
+    case SYM_DEREF: {
+      Symbol *sym = VAL2PTR(Symbol, *--sp);
+      *sp++ = sym->value;
       break;
     }
-    case CONST_4: {
-      *sp++ = (Val) read_u32(&ip);
-      break;
-    }
-    case CONST_8: {
-      Val ret = 0;
-      for (int i = 8; i >= 0; --i) {
-        ret |= *ip++ << i;
-      }
-      *sp++ = ret;
-      break;
-    }
-    case DYN_1: {
-      Val arg = *--sp;
-      *sp++ = dyn1ops[*ip++](arg);
-      break;
-    }
-    case DYN_2: {
-      Val rhs = *--sp;
-      Val lhs = *--sp;
-      *sp++ = dyn2ops[*ip++](lhs, rhs);
+    case LAMBDA: {
+      InterpClosure *cls = gs_alloc(GS_ALLOC_META(InterpClosure, 1));
+      u32 idx = read_u32(&ip);
+      u16 arity = read_u16(&ip);
+      *cls = gs_interp_closure(self->img, idx);
+      // TODO save closure values
+      sp -= arity;
+      *sp++ = PTR2VAL(cls);
       break;
     }
     case CALL: {
@@ -123,21 +89,13 @@ Err *gs_interp(
       u8 retc = *ip++;
       sp -= argc;
       Closure *f = VAL2PTR(Closure, *--sp);
-      GS_TRY(f->call(f, argc, sp + 1, retc, sp));
+
+      Err *err = f->call(f, argc, sp + 1, retc, sp);
+      if (err) {
+        return err;
+      }
+
       sp += retc;
-      break;
-    }
-    case INTERN: {
-      u8 len = *ip++;
-      Symbol *sym = gs_intern(
-        gs_global_syms,
-        (Utf8Str) {
-          (u8 *) ip,
-          (u32) len
-        }
-      );
-      ip += len;
-      *sp++ = PTR2VAL(sym);
       break;
     }
     case LOCAL_REF: {
@@ -159,4 +117,17 @@ Err *gs_interp(
     default: GS_FAILWITH("Unrecognised opcode", NULL);
     }
   }
+}
+
+static Err *gs_interp_closure_call(GS_CLOSURE_ARGS) {
+  StackFrame frame = {
+    gs_shadow_stack.top,
+    FKInterp,
+  };
+  gs_shadow_stack.top = &frame;
+  gs_shadow_stack.depth++;
+  Err *err = gs_interp((InterpClosure *) self, argc, args, retc, rets);
+  gs_shadow_stack.depth--;
+  gs_shadow_stack.top = frame.next;
+  return err;
 }
