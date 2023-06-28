@@ -3,12 +3,9 @@
 #include <string.h> // memset, memcpy
 #include <assert.h>
 
-GcAllocator *gs_global_gc;
+#include "gc_macros.h"
 
-#define GC_PTR_HEADER_REF(ptr) ((u8 *)(ptr) - sizeof(u64))
-#define GC_HEADER_MARK(header) (PTR_CAST(u8, header)[1])
-#define GC_HEADER_GEN(header) (PTR_CAST(u16, header)[1])
-#define GC_HEADER_TY(header) (PTR_CAST(u32, header)[1])
+GcAllocator *gs_global_gc;
 
 static MiniPage *find_mini_page(anyptr ptr) {
   return PTR_CAST(MiniPage, ((((uptr) ptr) / MINI_PAGE_SIZE) * MINI_PAGE_SIZE));
@@ -36,10 +33,18 @@ static Err *gs_fresh_page(u16 genNo, Generation *scope, MiniPage **out) {
   GS_RET_OK;
 }
 
-static Err *gs_alloc_in_generation(u16 gen, TypeIdx tyIdx, anyptr *out) {
+static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out, u32 *outSize) {
   Generation *scope = &gs_global_gc->scopes[gen];
   TypeInfo *ty = &gs_global_gc->types[tyIdx];
+
   u32 size = ty->layout.size;
+
+  if (ty->layout.isArray) {
+    size *= len;
+    size += sizeof(u64);
+  }
+  if (outSize) *outSize = size;
+
   u32 align = ty->layout.align;
 
   u8 *hdPtr, *retPtr;
@@ -63,8 +68,7 @@ static Err *gs_alloc_in_generation(u16 gen, TypeIdx tyIdx, anyptr *out) {
     memset(mPage->data + mPage->size, -1, paddingRequired);
     mPage->size = endPosition;
 
-    retPtr = mPage->data + position;
-    hdPtr = GC_PTR_HEADER_REF(retPtr);
+    hdPtr = mPage->data + position;
     *hdPtr = HtNormal;
   } else {
     GS_FAIL_IF(align > alignof(u64), "Unsupported large object alignment", NULL);
@@ -86,20 +90,44 @@ static Err *gs_alloc_in_generation(u16 gen, TypeIdx tyIdx, anyptr *out) {
     lo->gen = gen;
 
     hdPtr = lo->data;
-    retPtr = hdPtr + sizeof(u64);
     *hdPtr = HtLarge;
   }
 
-  GC_HEADER_MARK(hdPtr) = CtUnmarked;
-  GC_HEADER_GEN(hdPtr) = gen;
-  GC_HEADER_TY(hdPtr) = tyIdx;
+  retPtr = hdPtr + sizeof(u64);
+  if (ty->layout.isArray) {
+    *PTR_CAST(u64, retPtr) = (u64) len;
+  }
+
+  { u8 *mrk = &GC_HEADER_MARK(hdPtr);
+    *mrk = CtUnmarked; }
+  { u16 *gn = &GC_HEADER_GEN(hdPtr);
+    *gn = gen; }
+  { u32 *t = &GC_HEADER_TY(hdPtr);
+    *t = tyIdx; }
   *out = retPtr;
 
   GS_RET_OK;
 }
 
+static Err *gs_move_to_generation(u16 gen, u8 *header, anyptr *out) {
+  TypeIdx tyIdx = GC_HEADER_TY(header);
+  TypeInfo *ty = &gs_global_gc->types[tyIdx];
+  u32 len = 1;
+  if (ty->layout.isArray) {
+    len = PTR_CAST(u64, header)[1];
+  }
+  u32 size;
+  GS_TRY(gs_alloc_in_generation(gen, len, tyIdx, out, &size));
+  memcpy(out, header + sizeof(u64), size);
+  GS_RET_OK;
+}
+
 Err *gs_gc_alloc(TypeIdx tyIdx, anyptr *out) {
-  return gs_alloc_in_generation(gs_global_gc->topScope, tyIdx, out);
+  return gs_alloc_in_generation(gs_global_gc->topScope, 1, tyIdx, out, NULL);
+}
+
+Err *gs_gc_alloc_array(TypeIdx tyIdx, u32 len, anyptr *out) {
+  return gs_alloc_in_generation(gs_global_gc->topScope, len, tyIdx, out, NULL);
 }
 
 #ifndef __BYTE_ORDER__
@@ -130,51 +158,59 @@ static void gs_move_large_object(LargeObject *lo, u16 targetGen) {
  * Relocate all references held in obj to dstGen if they are in a
  * generation younger than dstGen, or in dstGen and moveLocal is true.
  */
-static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal) {
+static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
   TypeInfo *ti = gs_gc_typeinfo(obj);
-  Val *iter = PTR_CAST(Val, obj);
-  Val *end = iter + ti->layout.size;
-  u16 minMoveGen = dstGen + !moveLocal;
-  for (; iter != end; ++iter) {
-    if (VAL_IS_GC_PTR(*iter)) {
-      anyptr pointee = VAL2PTR(u8, *iter);
-      u8 *header = GC_PTR_HEADER_REF(pointee);
-      switch (*header) {
-      case HtNormal: {
-        u16 itsGeneration = find_mini_page(header)->generation;
-        if (itsGeneration >= minMoveGen) {
-          anyptr moved;
-          GS_TRY(
-            gs_alloc_in_generation(
-              dstGen,
-              GC_HEADER_TY(header),
-              &moved
-            )
-          );
-          *PTR_CAST(u64, header) = FORWARDING_HEADER(moved);
-          *iter = PTR2VAL_GC(moved);
-        }
-        break;
-      }
-      case HtForwarding: {
-        *iter = PTR2VAL_GC(READ_FORWARDED(header));
-        break;
-      }
-      case HtLarge: {
-        LargeObject *lo = GC_LARGE_OBJECT(pointee);
-        u16 itsGeneration = lo->gen;
-        if (itsGeneration > minMoveGen) {
-          if (GC_HEADER_MARK(header) == CtUnmarked) {
-            gs_move_large_object(lo, dstGen);
-            // pointer doesn't move
+
+  u8 *head = PTR_CAST(u8, obj);
+  u64 count;
+  if (ti->layout.isArray) {
+    count = *PTR_CAST(u64, obj);
+    head += sizeof(u64);
+  } else {
+    count = 1;
+  }
+  u8 *objEnd = head + ti->layout.size * count;
+
+  for (; head != objEnd; head += ti->layout.size) {
+    Val *iter = PTR_CAST(Val, head);
+    Val *end = iter + ti->layout.gcFieldc;
+    u16 minMoveGen = dstGen + !moveLocal;
+    for (; iter != end; ++iter) {
+      if (VAL_IS_GC_PTR(*iter)) {
+        anyptr pointee = VAL2PTR(u8, *iter);
+        u8 *header = GC_PTR_HEADER_REF(pointee);
+        switch (*header) {
+        case HtNormal: {
+          u16 itsGeneration = find_mini_page(header)->generation;
+          if (itsGeneration >= minMoveGen) {
+            anyptr moved;
+            GS_TRY(gs_move_to_generation(dstGen, header, &moved));
+            *PTR_CAST(u64, header) = FORWARDING_HEADER(moved);
+            *iter = PTR2VAL_GC(moved);
           }
+          break;
         }
-        break;
-      }
+        case HtForwarding: {
+          *iter = PTR2VAL_GC(READ_FORWARDED(header));
+          break;
+        }
+        case HtLarge: {
+          LargeObject *lo = GC_LARGE_OBJECT(pointee);
+          u16 itsGeneration = lo->gen;
+          if (itsGeneration > minMoveGen) {
+            if (GC_HEADER_MARK(header) == CtUnmarked) {
+              gs_move_large_object(lo, dstGen);
+              // pointer doesn't move
+            }
+          }
+          break;
+        }
+        }
       }
     }
   }
 
+  if (objEndOut) *objEndOut = objEnd;
   GS_RET_OK;
 }
 
@@ -201,7 +237,7 @@ static Err *gs_scan_grays(u16 gen, bool inPlace) {
           scope->firstNonGrayLo = iter = iter->prev
         ) {
           u8 *header = iter->data;
-          GS_TRY(gs_mark(header + sizeof(u64), gen, inPlace));
+          GS_TRY(gs_mark(header + sizeof(u64), gen, inPlace, NULL));
           GC_HEADER_MARK(header) = CtUnmarked;
         }
       }
@@ -219,9 +255,7 @@ static Err *gs_scan_grays(u16 gen, bool inPlace) {
             while (*iter == (u8) HtPadding) ++iter;
             assert(*iter == HtNormal);
             anyptr obj = iter + sizeof(u64);
-            GS_TRY(gs_mark(obj, gen, inPlace));
-            TypeInfo *ti = gs_gc_typeinfo(obj);
-            iter += sizeof(u64) + ti->layout.size;
+            GS_TRY(gs_mark(obj, gen, inPlace, &iter));
           }
           mp = mp->prev;
           if (mp == NULL) break;
@@ -256,13 +290,7 @@ static Err *gs_graduate_generation(u16 gen) {
           GS_TRY(gs_scan_grays(lastGeneration, false));
           lastGeneration = thisGeneration;
         }
-        GS_TRY(
-          gs_alloc_in_generation(
-            thisGeneration,
-            GC_HEADER_TY(headerRef),
-            &moved
-          )
-        );
+        GS_TRY(gs_move_to_generation(thisGeneration, headerRef, &moved));
         *PTR_CAST(u64, headerRef) = FORWARDING_HEADER(moved);
         *w->writeTarget = PTR2VAL_GC(moved);
         break;
@@ -351,6 +379,22 @@ Err *gs_gc_dispose(GcAllocator *gc) {
   gs_free(gc->types, GS_ALLOC_META(TypeInfo, gc->typeCap));
 
   gs_global_gc = NULL;
+  GS_RET_OK;
+}
+
+Err *gs_gc_push_type(TypeInfo info, TypeIdx *outIdx) {
+  u32 pos = gs_global_gc->typec++;
+  if (pos >= gs_global_gc->typeCap) {
+    gs_global_gc->types = gs_realloc(
+      gs_global_gc->types,
+      GS_ALLOC_META(TypeInfo, gs_global_gc->typec),
+      GS_ALLOC_META(TypeInfo, gs_global_gc->typec *= 2)
+    );
+    GS_FAIL_IF(gs_global_gc->types == NULL, "Could not resize", NULL);
+  }
+  gs_global_gc->types[pos] = info;
+  *outIdx = pos;
+
   GS_RET_OK;
 }
 

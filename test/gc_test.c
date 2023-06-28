@@ -1,10 +1,70 @@
 #include "gc/gc.h"
+#include "gc/gc_macros.h"
 
 Err *gs_main() {
+  {
+    u8 exampleHeader[sizeof(u64) * 3];
+
+    anyptr testObj = exampleHeader + sizeof(u64);
+    u8 *testHeader = GC_PTR_HEADER_REF(testObj);
+    GS_FAIL_IF(exampleHeader != testHeader, "Wrong header", NULL);
+    GS_FAIL_IF(exampleHeader + 1 != (u8 *) &GC_HEADER_MARK(testHeader), "Wrong mark", NULL);
+    GS_FAIL_IF(exampleHeader + 2 != (u8 *) &GC_HEADER_GEN(testHeader), "Wrong gen", NULL);
+    GS_FAIL_IF(exampleHeader + 4 != (u8 *) &GC_HEADER_TY(testHeader), "Wrong type", NULL);
+  }
+
   GcAllocator gc;
   GS_TRY(gs_gc_init(GC_DEFAULT_CONFIG, &gc));
 
-  
+  Field fields[] = {
+    {
+      .offset = 0,
+      .size = sizeof(Val),
+    },
+    {
+      .offset = sizeof(Val),
+      .size = sizeof(Val),
+    },
+  };
+  TypeIdx consIdx;
+  gs_gc_push_type(
+    (TypeInfo) {
+      .layout = {
+        .align = alignof(Val),
+        .size = sizeof(Val) * 2,
+        .gcFieldc = 2,
+        .isArray = false,
+        .fieldc = 2,
+        .fields = fields,
+      },
+      .protos = {
+        .keys = NULL,
+        .tables = NULL,
+        .size = 0
+      },
+      .name = GS_UTF8_CSTR("cons")
+    },
+    &consIdx
+  );
+
+  anyptr pair1, pair2, pair3;
+  GS_TRY(gs_gc_alloc(consIdx, &pair1));
+  PTR_CAST(Val, pair1)[0] = FIX2VAL(3);
+  PTR_CAST(Val, pair1)[1] = VAL_NIL;
+  GS_TRY(gs_gc_alloc(consIdx, &pair2));
+  PTR_CAST(Val, pair2)[0] = FIX2VAL(2);
+  PTR_CAST(Val, pair2)[1] = PTR2VAL_GC(pair1);
+  GS_TRY(gs_gc_alloc(consIdx, &pair3));
+  PTR_CAST(Val, pair3)[0] = FIX2VAL(1);
+  PTR_CAST(Val, pair3)[1] = PTR2VAL_GC(pair2);
+
+  GS_FAIL_IF(
+    pair1 == pair2 ||
+    pair2 == pair3 ||
+    pair3 == pair1,
+    "Aliasing allocations",
+    NULL
+  );
 
   GS_TRY(gs_gc_dispose(&gc));
 

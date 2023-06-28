@@ -58,6 +58,16 @@ typedef struct TypeLayout {
    * GC. These must precede any other fields, with no padding between.
    */
   u32 gcFieldc;
+
+  /**
+   * Whether this type represents an array type.
+   *
+   * If it does, then a u64 size field immediately follows the header
+   * (any smaller would just introduce padding), and that many objects
+   * described otherwise by this type appear contiguously.
+   */
+  unsigned isArray : 1;
+
   /* needed for reflection */
   /**
    * The number of any fields this type has, including both GC-managed
@@ -379,6 +389,11 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *out);
  * managed by it.
  */
 Err *gs_gc_dispose(GcAllocator *gc);
+
+/**
+ * Add a new type to the garbage collector.
+ */
+Err *gs_gc_push_type(TypeInfo info, TypeIdx *outIdx);
 
 /**
  * Get the type info of a pointer managed by the garbage collector.
