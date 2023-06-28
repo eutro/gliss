@@ -3,6 +3,8 @@
 #include <string.h> // memset, memcpy
 #include <assert.h>
 
+#include "../logging.h"
+
 #include "gc_macros.h"
 
 GcAllocator *gs_global_gc;
@@ -24,6 +26,7 @@ static Err *gs_fresh_page(u16 genNo, Generation *scope, MiniPage **out) {
   MiniPage *freePage = gs_global_gc->freeMiniPage;
   GS_FAIL_IF(freePage == NULL, "No more pages", NULL);
   MiniPage *prevPage = gs_global_gc->freeMiniPage = freePage->prev;
+  gs_global_gc->freeMiniPagec--;
   prevPage->next = NULL;
 
   freePage->prev = NULL;
@@ -34,10 +37,19 @@ static Err *gs_fresh_page(u16 genNo, Generation *scope, MiniPage **out) {
   scope->miniPagec++;
   *out = freePage;
 
+  LOG_DEBUG(
+    "Attached mini-page to generation %" PRIu16 " (now has %" PRIu32 ", %" PRIu32 " remain free)",
+    genNo,
+    scope->miniPagec,
+    gs_global_gc->freeMiniPagec
+  );
+
   GS_RET_OK;
 }
 
 static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out, u32 *outSize) {
+  LOG_TRACE("Allocating; gen: %" PRIu16 ", ty: %" PRIu32 ", len: %" PRIu32, gen, tyIdx, len);
+
   Generation *scope = &gs_global_gc->scopes[gen];
   TypeInfo *ty = &gs_global_gc->types[tyIdx];
 
@@ -62,7 +74,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
         % align))
       % align;
     u16 position = mPage->size + paddingRequired;
-    u16 endPosition = position + ty->layout.size;
+    u16 endPosition = position + sizeof(u64) + ty->layout.size;
     if (endPosition > MINI_PAGE_DATA_SIZE) {
       // ran out of space in this page, go again
       GS_TRY(gs_fresh_page(gen, scope, &mPage));
@@ -108,6 +120,8 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
   PTR_REF(u64, hdPtr) = GC_BUILD_HEADER(hdTag, CtUnmarked, gen, tyIdx);
   *out = retPtr;
 
+  LOG_TRACE("-> res: %p (%" PRIu16 " bytes used in mini-page)", retPtr, scope->current->size);
+
   GS_RET_OK;
 }
 
@@ -121,7 +135,7 @@ static Err *gs_move_to_generation(u16 gen, u8 *header, anyptr *out) {
   }
   u32 size;
   GS_TRY(gs_alloc_in_generation(gen, len, tyIdx, out, &size));
-  memcpy(out, header + sizeof(u64), size);
+  memcpy(*out, header + sizeof(u64), size);
   GS_RET_OK;
 }
 
@@ -145,11 +159,53 @@ static void gs_move_large_object(LargeObject *lo, u16 targetGen) {
   GC_HEADER_MARK(lo->data) = CtGray;
 }
 
+static Err *mark_val(Val *val, u16 dstGen, u16 minMoveGen) {
+  LOG_TRACE("Marking val; ptr: %p, val: 0x%" PRIx64, val, *val);
+
+  if (VAL_IS_GC_PTR(*val)) {
+    anyptr pointee = VAL2PTR(u8, *val);
+    u8 *header = GC_PTR_HEADER_REF(pointee);
+    switch (*header) {
+    case HtNormal: {
+      u16 itsGeneration = find_mini_page(header)->generation;
+      if (itsGeneration >= minMoveGen) {
+        anyptr moved;
+        GS_TRY(gs_move_to_generation(dstGen, header, &moved));
+        PTR_REF(u64, header) = FORWARDING_HEADER(moved);
+        *val = PTR2VAL_GC(moved);
+      }
+      break;
+    }
+    case HtForwarding: {
+      *val = PTR2VAL_GC(READ_FORWARDED(header));
+      break;
+    }
+    case HtLarge: {
+      LargeObject *lo = GC_LARGE_OBJECT(pointee);
+      u16 itsGeneration = lo->gen;
+      if (itsGeneration > minMoveGen) {
+        if (GC_HEADER_MARK(header) == CtUnmarked) {
+          gs_move_large_object(lo, dstGen);
+          // pointer doesn't move
+        }
+      }
+      break;
+    }
+    }
+  }
+
+  LOG_TRACE("Marked -> 0x%" PRIx64, *val);
+
+  GS_RET_OK;
+}
+
 /**
  * Relocate all references held in obj to dstGen if they are in a
  * generation younger than dstGen, or in dstGen and moveLocal is true.
  */
-static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
+static Err *gs_visit_gray(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
+  LOG_TRACE("Visiting gray; ptr: %p, gen: %" PRIu16, obj, dstGen);
+
   TypeInfo *ti = gs_gc_typeinfo(obj);
 
   u8 *head = obj;
@@ -162,47 +218,67 @@ static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
   }
   u8 *objEnd = head + ti->layout.size * count;
 
+  u16 minMoveGen = dstGen + !moveLocal;
   for (; head != objEnd; head += ti->layout.size) {
     // read and write all of these indirectly so we can alias the raw bytes
     Val *iter = (Val *) head;
     Val *end = iter + ti->layout.gcFieldc;
-    u16 minMoveGen = dstGen + !moveLocal;
     for (; iter != end; ++iter) {
-      if (VAL_IS_GC_PTR(PTR_REF(Val, iter))) {
-        anyptr pointee = VAL2PTR(u8, PTR_REF(Val, iter));
-        u8 *header = GC_PTR_HEADER_REF(pointee);
-        switch (*header) {
-        case HtNormal: {
-          u16 itsGeneration = find_mini_page(header)->generation;
-          if (itsGeneration >= minMoveGen) {
-            anyptr moved;
-            GS_TRY(gs_move_to_generation(dstGen, header, &moved));
-            PTR_REF(u64, moved) = FORWARDING_HEADER(moved);
-            PTR_REF(Val, iter) = PTR2VAL_GC(moved);
-          }
-          break;
-        }
-        case HtForwarding: {
-          PTR_REF(Val, iter) = PTR2VAL_GC(READ_FORWARDED(header));
-          break;
-        }
-        case HtLarge: {
-          LargeObject *lo = GC_LARGE_OBJECT(pointee);
-          u16 itsGeneration = lo->gen;
-          if (itsGeneration > minMoveGen) {
-            if (GC_HEADER_MARK(header) == CtUnmarked) {
-              gs_move_large_object(lo, dstGen);
-              // pointer doesn't move
-            }
-          }
-          break;
-        }
-        }
-      }
+      mark_val(&PTR_REF(Val, iter), dstGen, minMoveGen);
     }
   }
 
   if (objEndOut) *objEndOut = objEnd;
+  GS_RET_OK;
+}
+
+struct MarkValCls {
+  u16 dstGen;
+  u16 srcGen;
+};
+static Err *mark_val_cls(Val *toMark, anyptr closed) {
+  struct MarkValCls *cls = closed;
+  return mark_val(toMark, cls->dstGen, cls->srcGen);
+}
+static Err *gs_mark_roots(u16 dstGen, u16 srcGen) {
+  LOG_DEBUG("Marking roots; src: %" PRIu16 ", dst: %" PRIu16, srcGen, dstGen);
+
+  Generation *scope = &gs_global_gc->scopes[srcGen];
+  for (
+    GcRoots *iter = gs_global_gc->roots;
+    iter != scope->roots;
+    iter = (GcRoots *) ((uptr) iter->next & ~3)
+  ) {
+    u8 tag = (u8) ((uptr) iter->next & 3);
+    switch (tag) {
+    case GrDirect: {
+      GcRootsDirect *roots = (anyptr) iter;
+      Val *end = roots->arr + roots->len;
+      for (Val *it = roots->arr; it != end; ++it) {
+        GS_TRY(mark_val(it, dstGen, srcGen));
+      }
+      break;
+    }
+    case GrIndirect: {
+      GcRootsIndirect(1) *roots = (anyptr) iter;
+      for (size_t i = 0; i < roots->len; ++i) {
+        Val *it = roots->arr[i].arr;
+        Val *end = it + roots->arr[i].len;
+        for (; it != end; ++it) {
+          GS_TRY(mark_val(it, dstGen, srcGen));
+        }
+      }
+      break;
+    }
+    case GrSpecial: {
+      GcRootsSpecial *roots = (anyptr) iter;
+      struct MarkValCls cls = { dstGen, srcGen };
+      GS_TRY(roots->fn(mark_val_cls, &cls, roots->closed));
+      break;
+    }
+    }
+  }
+
   GS_RET_OK;
 }
 
@@ -215,6 +291,8 @@ static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
  * to younger generations are always copied.
  */
 static Err *gs_scan_grays(u16 gen, bool inPlace) {
+  LOG_DEBUG("Scanning grays; gen %" PRIu16 ", in-place: %s", gen, inPlace ? "yes" : "no");
+
   Generation *scope = &gs_global_gc->scopes[gen];
   bool moved;
   do {
@@ -229,7 +307,7 @@ static Err *gs_scan_grays(u16 gen, bool inPlace) {
           scope->firstNonGrayLo = iter = iter->prev
         ) {
           u8 *header = iter->data;
-          GS_TRY(gs_mark(header + sizeof(u64), gen, inPlace, NULL));
+          GS_TRY(gs_visit_gray(header + sizeof(u64), gen, inPlace, NULL));
           GC_HEADER_MARK(header) = CtUnmarked;
         }
       }
@@ -245,9 +323,12 @@ static Err *gs_scan_grays(u16 gen, bool inPlace) {
         while (true) {
           while (iter < mp->data + mp->size) {
             while (*iter == (u8) HtPadding) ++iter;
-            assert(*iter == HtNormal);
+            if (*iter != (u8) HtNormal) {
+              LOG_FATAL("Expected normal tag (0); got: %" PRIu8 ", ptr: %p", *iter, iter);
+              GS_FAILWITH("Bad tag", NULL);
+            }
             anyptr obj = iter + sizeof(u64);
-            GS_TRY(gs_mark(obj, gen, inPlace, &iter));
+            GS_TRY(gs_visit_gray(obj, gen, inPlace, &iter));
           }
           mp = mp->prev;
           if (mp == NULL) break;
@@ -261,16 +342,27 @@ static Err *gs_scan_grays(u16 gen, bool inPlace) {
   GS_RET_OK;
 }
 
+static void gs_setup_grays(u16 gen) {
+  Generation *scope = &gs_global_gc->scopes[gen];
+  scope->firstGray = scope->current->data + scope->current->size;
+  scope->firstNonGrayLo = scope->largeObjects;
+}
+
 /**
  * Move each object in gen's trail to the older generation it belongs
  * in.
  */
 static Err *gs_graduate_generation(u16 gen) {
+  LOG_DEBUG("Graduating generation %" PRIu16, gen);
+
   Generation *scope = &gs_global_gc->scopes[gen];
+
+  bool emptyTrail = true;
   // TODO sort trail
   u16 lastGeneration = 0;
   for (Trail *iter = scope->trail; iter != NULL; iter = iter->next) {
     for (u8 i = 0; i < iter->count; ++i) {
+      emptyTrail = false;
       struct TrailWrite *w = iter->writes + i;
       u8 *headerRef = GC_PTR_HEADER_REF(w->object);
       switch (*headerRef) {
@@ -281,6 +373,7 @@ static Err *gs_graduate_generation(u16 gen) {
         if (thisGeneration > lastGeneration) {
           GS_TRY(gs_scan_grays(lastGeneration, false));
           lastGeneration = thisGeneration;
+          gs_setup_grays(thisGeneration);
         }
         GS_TRY(gs_move_to_generation(thisGeneration, headerRef, &moved));
         PTR_REF(u64, headerRef) = FORWARDING_HEADER(moved);
@@ -298,6 +391,7 @@ static Err *gs_graduate_generation(u16 gen) {
         if (thisGeneration > lastGeneration) {
           GS_TRY(gs_scan_grays(lastGeneration, false));
           lastGeneration = thisGeneration;
+          gs_setup_grays(thisGeneration);
         }
         if (GC_HEADER_MARK(headerRef) == CtUnmarked) {
           LargeObject *lo = GC_LARGE_OBJECT(headerRef);
@@ -313,12 +407,51 @@ static Err *gs_graduate_generation(u16 gen) {
     }
   }
 
-  GS_TRY(gs_scan_grays(lastGeneration, false));
+  if (!emptyTrail) {
+    GS_TRY(gs_scan_grays(lastGeneration, false));
+  }
   GS_RET_OK;
 }
 
-Err *gs_gc_push_scope0(u16 newTop);
+static Err *gs_minor_gc(u16 srcGen, u16 dstGen) {
+  LOG_DEBUG("Minor GC; src: %" PRIu16 ", dst: %" PRIu16, srcGen, dstGen);
+
+  GS_TRY(gs_graduate_generation(srcGen));
+  bool inPlace = dstGen == srcGen;
+  Generation *scope;
+  MiniPage *oldHd, *oldTl, *newTl;
+  u32 mpCount;
+
+  if (inPlace) {
+    scope = &gs_global_gc->scopes[srcGen];
+    oldTl = scope->first;
+    oldHd = scope->current;
+    mpCount = scope->miniPagec;
+    scope->miniPagec = 0;
+    scope->first = scope->current = NULL;
+    GS_TRY(gs_fresh_page(srcGen, scope, &newTl));
+    scope->first = newTl;
+  }
+
+  gs_setup_grays(dstGen);
+  GS_TRY(gs_mark_roots(dstGen, srcGen));
+  GS_TRY(gs_scan_grays(dstGen, inPlace));
+
+  if (inPlace) {
+    MiniPage *mpTail = gs_global_gc->freeMiniPage;
+    mpTail->next = oldHd;
+    oldHd->prev = mpTail;
+    gs_global_gc->freeMiniPage = oldTl;
+    gs_global_gc->freeMiniPagec += mpCount;
+  }
+
+  GS_RET_OK;
+}
+
+Err *gs_gc_push_scope0(u16 gen);
 Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
+  LOG_DEBUG("%s", "Initialising GC");
+
   gc->scopes = gs_alloc(GS_ALLOC_META(Generation, cfg.scopeCount));
   gc->topScope = 0;
   gc->scopeCap = cfg.scopeCount;
@@ -335,6 +468,8 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
   gc->types = gs_alloc(GS_ALLOC_META(TypeInfo, gc->typeCap));
   gc->typec = 0;
 
+  gc->roots = NULL;
+
   if(
     !gc->scopes ||
     !gc->firstMiniPage ||
@@ -345,6 +480,11 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
     gs_free(gc->types, GS_ALLOC_META(TypeInfo, gc->typeCap));
     GS_FAILWITH("Failed allocation", NULL);
   }
+  LOG_TRACE(
+    "GC space: mini-pages: %p - %p",
+    gc->firstMiniPage,
+    (u8 (*)[MINI_PAGE_SIZE]) gc->firstMiniPage + gc->miniPagec
+  );
 
   MiniPage *lastMiniPage = &PTR_REF(MiniPage, gc->firstMiniPage);
   lastMiniPage->prev = NULL;
@@ -364,6 +504,7 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
 }
 
 Err *gs_gc_dispose(GcAllocator *gc) {
+  LOG_DEBUG("%s", "Disposing of GC");
   // TODO iterate over large objects
 
   gs_free(gc->scopes, GS_ALLOC_META(Generation, gc->scopeCap));
@@ -387,17 +528,21 @@ Err *gs_gc_push_type(TypeInfo info, TypeIdx *outIdx) {
   gs_global_gc->types[pos] = info;
   *outIdx = pos;
 
+  LOG_DEBUG("Added type %" PRIu32, pos);
+
   GS_RET_OK;
 }
 
 Err *gs_gc_push_scope0(u16 newTop) {
   Generation *top = &gs_global_gc->scopes[newTop];
-  top->current = NULL;
-  GS_TRY(gs_fresh_page(newTop, top, &top->current));
 
-  top->first = top->current;
+  top->current = NULL;
   top->largeObjects = NULL;
   top->trail = NULL;
+  top->miniPagec = 0;
+  top->roots = gs_global_gc->roots;
+  GS_TRY(gs_fresh_page(newTop, top, &top->current));
+  top->first = top->current;
 
   GS_RET_OK;
 }
@@ -409,20 +554,24 @@ Err *gs_gc_push_scope() {
     GS_FAILWITH("Too many GC scopes", NULL);
   }
 
+  LOG_DEBUG("Pushing GC scope %" PRIu16, newTop);
+
   return gs_gc_push_scope0(newTop);
 }
 
 Err *gs_gc_pop_scope() {
   u16 oldTop = gs_global_gc->topScope--;
 
-  // TODO roots
-  GS_TRY(gs_graduate_generation(oldTop));
+  LOG_DEBUG("Popping GC scope %" PRIu16, oldTop);
+
+  GS_TRY(gs_minor_gc(oldTop, oldTop - 1));
 
   Generation *scope = &gs_global_gc->scopes[oldTop];
   MiniPage *mpTail = gs_global_gc->freeMiniPage;
   mpTail->next = scope->current;
   scope->current->prev = mpTail;
   gs_global_gc->freeMiniPage = scope->first;
+  // TODO delete large objects
 
   GS_RET_OK;
 }

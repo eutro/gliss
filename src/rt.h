@@ -38,20 +38,26 @@ struct Err {
     return &GS_FW_ERR;                                               \
   } while(0)
 
-#define GS_FAIL_IF(COND, MSG, CAUSE) \
-  do {                               \
-    if (COND) {                      \
-      GS_FAILWITH(MSG, CAUSE);       \
-    }                                \
-  } while(0)
+#define NO_CLEANUP while(0)
 
-#define GS_TRY_MSG(CALL, MSG)                                               \
+#define GS_FAIL_IF_C(COND, MSG, CAUSE, CLEANUP) \
+  do {                                          \
+    if (COND) {                                 \
+      CLEANUP;                                  \
+      GS_FAILWITH(MSG, CAUSE);                  \
+    }                                           \
+  } while(0)
+#define GS_FAIL_IF(COND, MSG, CAUSE) GS_FAIL_IF_C(COND, MSG, CAUSE, NO_CLEANUP)
+
+#define GS_TRY_MSG_C(CALL, MSG, CLEANUP)                                \
   do {                                                                  \
     Err *gs_try_res = (CALL);                                           \
-    GS_FAIL_IF(gs_try_res, MSG, gs_try_res);                       \
+    GS_FAIL_IF_C(gs_try_res, MSG, gs_try_res, CLEANUP);                 \
   } while(0)
+#define GS_TRY_MSG(CALL, MSG) GS_TRY_MSG_C(CALL, MSG, NO_CLEANUP)
 
-#define GS_TRY(CALL) GS_TRY_MSG(CALL, #CALL)
+#define GS_TRY_C(CALL, CLEANUP) GS_TRY_MSG_C(CALL, #CALL, CLEANUP)
+#define GS_TRY(CALL) GS_TRY_C(CALL, NO_CLEANUP)
 
 #define GS_RET_OK return NULL
 

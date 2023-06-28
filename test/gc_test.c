@@ -49,6 +49,8 @@ Err *gs_main() {
     &consIdx
   );
 
+  GS_TRY(gs_gc_push_scope());
+
   anyptr pair1, pair2, pair3;
   GS_TRY(gs_gc_alloc(consIdx, &pair1));
   PTR_REF(ConsCell, pair1)[0] = FIX2VAL(3);
@@ -60,13 +62,25 @@ Err *gs_main() {
   PTR_REF(ConsCell, pair3)[0] = FIX2VAL(1);
   PTR_REF(ConsCell, pair3)[1] = PTR2VAL_GC(pair2);
 
-  GS_FAIL_IF(
+  anyptr pair4;
+  GS_TRY(gs_gc_alloc(consIdx, &pair4));
+  PTR_REF(ConsCell, pair4)[0] = FIX2VAL(0);
+  PTR_REF(ConsCell, pair4)[1] = PTR2VAL_GC(pair3);
+
+  Val toPreserve = PTR2VAL_GC(pair3);
+  PUSH_DIRECT_GC_ROOTS(1, &toPreserve);
+
+  GS_FAIL_IF_C(
     pair1 == pair2 ||
     pair2 == pair3 ||
     pair3 == pair1,
     "Aliasing allocations",
-    NULL
+    NULL,
+    POP_GC_ROOTS()
   );
+
+  GS_TRY(gs_gc_pop_scope());
+  POP_GC_ROOTS();
 
   GS_TRY(gs_gc_dispose(&gc));
 
