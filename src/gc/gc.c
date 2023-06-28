@@ -8,15 +8,19 @@
 GcAllocator *gs_global_gc;
 
 static MiniPage *find_mini_page(anyptr ptr) {
-  return PTR_CAST(MiniPage, ((((uptr) ptr) / MINI_PAGE_SIZE) * MINI_PAGE_SIZE));
+  // strict-aliasing ok, each mini-page pointer does actually have it
+  // as the effective type
+  return (MiniPage *) ((((uptr) ptr) / MINI_PAGE_SIZE) * MINI_PAGE_SIZE);
 }
 
 TypeInfo *gs_gc_typeinfo(anyptr gcPtr) {
+  // s-a ok, read through union
   u32 tyIdx = GC_HEADER_TY(GC_PTR_HEADER_REF(gcPtr));
   return &gs_global_gc->types[tyIdx];
 }
 
 static Err *gs_fresh_page(u16 genNo, Generation *scope, MiniPage **out) {
+  // s-a ok with mini-page headers
   MiniPage *freePage = gs_global_gc->freeMiniPage;
   GS_FAIL_IF(freePage == NULL, "No more pages", NULL);
   MiniPage *prevPage = gs_global_gc->freeMiniPage = freePage->prev;
@@ -48,6 +52,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
   u32 align = ty->layout.align;
 
   u8 *hdPtr, *retPtr;
+  u8 hdTag;
   if (size <= MINI_PAGE_MAX_OBJECT_SIZE) {
     MiniPage *mPage = scope->current;
   computePadding:;
@@ -65,11 +70,12 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
       goto computePadding;
     }
 
+    // s-a OK
     memset(mPage->data + mPage->size, -1, paddingRequired);
     mPage->size = endPosition;
 
     hdPtr = mPage->data + position;
-    *hdPtr = HtNormal;
+    hdTag = HtNormal;
   } else {
     GS_FAIL_IF(align > alignof(u64), "Unsupported large object alignment", NULL);
     LargeObject *lo = gs_alloc(
@@ -90,20 +96,16 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
     lo->gen = gen;
 
     hdPtr = lo->data;
-    *hdPtr = HtLarge;
+    hdTag = HtLarge;
   }
 
   retPtr = hdPtr + sizeof(u64);
   if (ty->layout.isArray) {
-    *PTR_CAST(u64, retPtr) = (u64) len;
+    PTR_REF(u64, retPtr) = len;
   }
 
-  { u8 *mrk = &GC_HEADER_MARK(hdPtr);
-    *mrk = CtUnmarked; }
-  { u16 *gn = &GC_HEADER_GEN(hdPtr);
-    *gn = gen; }
-  { u32 *t = &GC_HEADER_TY(hdPtr);
-    *t = tyIdx; }
+  // s-a ok
+  PTR_REF(u64, hdPtr) = GC_BUILD_HEADER(hdTag, CtUnmarked, gen, tyIdx);
   *out = retPtr;
 
   GS_RET_OK;
@@ -114,7 +116,8 @@ static Err *gs_move_to_generation(u16 gen, u8 *header, anyptr *out) {
   TypeInfo *ty = &gs_global_gc->types[tyIdx];
   u32 len = 1;
   if (ty->layout.isArray) {
-    len = PTR_CAST(u64, header)[1];
+    // s-a ok, through union
+    len = (u32) PTR_REF(u64, (u64 *) header + 1);
   }
   u32 size;
   GS_TRY(gs_alloc_in_generation(gen, len, tyIdx, out, &size));
@@ -129,18 +132,6 @@ Err *gs_gc_alloc(TypeIdx tyIdx, anyptr *out) {
 Err *gs_gc_alloc_array(TypeIdx tyIdx, u32 len, anyptr *out) {
   return gs_alloc_in_generation(gs_global_gc->topScope, len, tyIdx, out, NULL);
 }
-
-#ifndef __BYTE_ORDER__
-#  error "unknown byte order"
-#else
-#  if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#    define READ_FORWARDED(headerRef) ((anyptr) (uptr) (*PTR_CAST(u64, (headerRef)) >> 8))
-#    define FORWARDING_HEADER(forwarded) (((u64) HtForwarding << 56) | ((u64) (uptr) (forwarded) >> 8))
-#  else
-#    define READ_FORWARDED(headerRef) ((anyptr) (uptr) (*PTR_CAST(u64, (headerRef)) & 0x00FFFFFFFFFFFFFF))
-#    define FORWARDING_HEADER(forwarded) (((u64) HtForwarding << 56) | (u64) (uptr) (forwarded))
-#  endif
-#endif
 
 static void gs_move_large_object(LargeObject *lo, u16 targetGen) {
   if (lo->next) lo->next->prev = lo->prev;
@@ -161,10 +152,10 @@ static void gs_move_large_object(LargeObject *lo, u16 targetGen) {
 static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
   TypeInfo *ti = gs_gc_typeinfo(obj);
 
-  u8 *head = PTR_CAST(u8, obj);
+  u8 *head = obj;
   u64 count;
   if (ti->layout.isArray) {
-    count = *PTR_CAST(u64, obj);
+    count = PTR_REF(u64, obj);
     head += sizeof(u64);
   } else {
     count = 1;
@@ -172,12 +163,13 @@ static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
   u8 *objEnd = head + ti->layout.size * count;
 
   for (; head != objEnd; head += ti->layout.size) {
-    Val *iter = PTR_CAST(Val, head);
+    // read and write all of these indirectly so we can alias the raw bytes
+    Val *iter = (Val *) head;
     Val *end = iter + ti->layout.gcFieldc;
     u16 minMoveGen = dstGen + !moveLocal;
     for (; iter != end; ++iter) {
-      if (VAL_IS_GC_PTR(*iter)) {
-        anyptr pointee = VAL2PTR(u8, *iter);
+      if (VAL_IS_GC_PTR(PTR_REF(Val, iter))) {
+        anyptr pointee = VAL2PTR(u8, PTR_REF(Val, iter));
         u8 *header = GC_PTR_HEADER_REF(pointee);
         switch (*header) {
         case HtNormal: {
@@ -185,13 +177,13 @@ static Err *gs_mark(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
           if (itsGeneration >= minMoveGen) {
             anyptr moved;
             GS_TRY(gs_move_to_generation(dstGen, header, &moved));
-            *PTR_CAST(u64, header) = FORWARDING_HEADER(moved);
-            *iter = PTR2VAL_GC(moved);
+            PTR_REF(u64, moved) = FORWARDING_HEADER(moved);
+            PTR_REF(Val, iter) = PTR2VAL_GC(moved);
           }
           break;
         }
         case HtForwarding: {
-          *iter = PTR2VAL_GC(READ_FORWARDED(header));
+          PTR_REF(Val, iter) = PTR2VAL_GC(READ_FORWARDED(header));
           break;
         }
         case HtLarge: {
@@ -291,7 +283,7 @@ static Err *gs_graduate_generation(u16 gen) {
           lastGeneration = thisGeneration;
         }
         GS_TRY(gs_move_to_generation(thisGeneration, headerRef, &moved));
-        *PTR_CAST(u64, headerRef) = FORWARDING_HEADER(moved);
+        PTR_REF(u64, headerRef) = FORWARDING_HEADER(moved);
         *w->writeTarget = PTR2VAL_GC(moved);
         break;
       }
@@ -354,10 +346,10 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
     GS_FAILWITH("Failed allocation", NULL);
   }
 
-  MiniPage *lastMiniPage = PTR_CAST(MiniPage, gc->firstMiniPage);
+  MiniPage *lastMiniPage = &PTR_REF(MiniPage, gc->firstMiniPage);
   lastMiniPage->prev = NULL;
   for (u32 i = 1; i < gc->miniPagec; ++i) {
-    MiniPage *nextMiniPage = PTR_CAST(MiniPage, gc->firstMiniPage + MINI_PAGE_SIZE * i);
+    MiniPage *nextMiniPage = &PTR_REF(MiniPage, gc->firstMiniPage + MINI_PAGE_SIZE * i);
     lastMiniPage->next = nextMiniPage;
     nextMiniPage->prev = lastMiniPage;
     lastMiniPage = nextMiniPage;

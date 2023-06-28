@@ -1,6 +1,8 @@
 #include "gc/gc.h"
 #include "gc/gc_macros.h"
 
+typedef Val ConsCell[2];
+
 Err *gs_main() {
   {
     u8 exampleHeader[sizeof(u64) * 3];
@@ -8,9 +10,9 @@ Err *gs_main() {
     anyptr testObj = exampleHeader + sizeof(u64);
     u8 *testHeader = GC_PTR_HEADER_REF(testObj);
     GS_FAIL_IF(exampleHeader != testHeader, "Wrong header", NULL);
-    GS_FAIL_IF(exampleHeader + 1 != (u8 *) &GC_HEADER_MARK(testHeader), "Wrong mark", NULL);
-    GS_FAIL_IF(exampleHeader + 2 != (u8 *) &GC_HEADER_GEN(testHeader), "Wrong gen", NULL);
-    GS_FAIL_IF(exampleHeader + 4 != (u8 *) &GC_HEADER_TY(testHeader), "Wrong type", NULL);
+    GS_FAIL_IF(1 != (u8 *) &GC_HEADER_MARK(testHeader) - exampleHeader, "Wrong mark", NULL);
+    GS_FAIL_IF(2 != (u8 *) &GC_HEADER_GEN(testHeader) - exampleHeader, "Wrong gen", NULL);
+    GS_FAIL_IF(4 != (u8 *) &GC_HEADER_TY(testHeader) - exampleHeader, "Wrong type", NULL);
   }
 
   GcAllocator gc;
@@ -49,14 +51,14 @@ Err *gs_main() {
 
   anyptr pair1, pair2, pair3;
   GS_TRY(gs_gc_alloc(consIdx, &pair1));
-  PTR_CAST(Val, pair1)[0] = FIX2VAL(3);
-  PTR_CAST(Val, pair1)[1] = VAL_NIL;
+  PTR_REF(ConsCell, pair1)[0] = FIX2VAL(3);
+  PTR_REF(ConsCell, pair1)[1] = VAL_NIL;
   GS_TRY(gs_gc_alloc(consIdx, &pair2));
-  PTR_CAST(Val, pair2)[0] = FIX2VAL(2);
-  PTR_CAST(Val, pair2)[1] = PTR2VAL_GC(pair1);
+  PTR_REF(ConsCell, pair2)[0] = FIX2VAL(2);
+  PTR_REF(ConsCell, pair2)[1] = PTR2VAL_GC(pair1);
   GS_TRY(gs_gc_alloc(consIdx, &pair3));
-  PTR_CAST(Val, pair3)[0] = FIX2VAL(1);
-  PTR_CAST(Val, pair3)[1] = PTR2VAL_GC(pair2);
+  PTR_REF(ConsCell, pair3)[0] = FIX2VAL(1);
+  PTR_REF(ConsCell, pair3)[1] = PTR2VAL_GC(pair2);
 
   GS_FAIL_IF(
     pair1 == pair2 ||

@@ -262,10 +262,6 @@ typedef struct MiniPage {
 // upper bound on unused space in a mini-page
 #define MINI_PAGE_MAX_OBJECT_SIZE (MINI_PAGE_DATA_SIZE / 8 - sizeof(u64))
 
-// requires at least C99
-#define BIT_CAST(DstTy, SrcTy, val) (((union { DstTy dst; SrcTy src; }) {.src = (val)}).dst)
-#define PTR_CAST(PointeeTy, val) (&((union { PointeeTy dst; u8 src[sizeof(PointeeTy)]; } *)(u8 *)(val))->dst)
-
 /** Just a linked list of objects considered too large to be put into a mini-page directly. */
 typedef struct LargeObject {
   struct LargeObject *prev, *next;
@@ -273,9 +269,8 @@ typedef struct LargeObject {
   u16 gen;
   alignas(u64) u8 data[1];
 } LargeObject;
-#define GC_LARGE_OBJECT(ptr) (PTR_CAST(LargeObject, (u8 *)ptr - offsetof(LargeObject, data)))
 
-#define TRAIL_SIZE 32
+#define TRAIL_SIZE 31
 
 typedef struct Trail {
   struct Trail *next;
