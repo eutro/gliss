@@ -27,10 +27,10 @@ Err *gs_add_primitives(SymTable *table) {
   Symbol *sym;
 
   GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("symbol-set-value!")));
-  sym->value = PTR2VAL(&symbol_set_value);
+  sym->value = PTR2VAL_NOGC(&symbol_set_value);
 
   GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("symbol-set-macro!")));
-  sym->value = PTR2VAL(&symbol_set_macro);
+  sym->value = PTR2VAL_NOGC(&symbol_set_macro);
 
   GS_RET_OK;
 }

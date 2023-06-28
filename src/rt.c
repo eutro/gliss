@@ -39,20 +39,20 @@ Err *gs_write_error(Err *err, OutStream *stream) {
   while (slow) {
     Utf8Str msgHere;
 
-    arg = PTR2VAL(&slow->file);
+    arg = PTR2VAL_NOGC(&slow->file);
     GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
 
     char buf[64];
     int size = snprintf(buf, sizeof(buf), " (%u): ", slow->line);
     msgHere = (Utf8Str) { (u8 *) buf, (u32) size };
-    arg = PTR2VAL(&msgHere);
+    arg = PTR2VAL_NOGC(&msgHere);
     GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
 
-    arg = PTR2VAL(&slow->msg);
+    arg = PTR2VAL_NOGC(&slow->msg);
     GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
 
     msgHere = GS_UTF8_CSTR("\n");
-    arg = PTR2VAL(&msgHere);
+    arg = PTR2VAL_NOGC(&msgHere);
     GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
 
     if (fast) {
@@ -158,7 +158,7 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
   Symbol *val = gs_alloc(GS_ALLOC_META(Symbol, 1));
   *val = (Symbol) {
     name,
-    PTR2VAL(&symbol_trap_closure),
+    PTR2VAL_NOGC(&symbol_trap_closure),
     false, // not macro
   };
   if (it == end) {

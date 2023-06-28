@@ -188,7 +188,7 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
   }
   case CSymbol: {
     struct ConstBytevec *bv = (struct ConstBytevec *) info;
-    *out = PTR2VAL(
+    *out = PTR2VAL_NOGC(
       gs_intern(
         gs_global_syms,
         (Utf8Str) {
@@ -205,7 +205,7 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
     GS_FAIL_IF(!theStr, "Failed allocation", NULL);
     theStr->len = get32le(bv->len);
     theStr->bytes = bv->data;
-    *out = PTR2VAL(theStr);
+    *out = PTR2VAL_NOGC(theStr);
     break;
   }
   default: GS_FAILWITH("Unknown constant type", NULL);

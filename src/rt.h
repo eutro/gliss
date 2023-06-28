@@ -63,16 +63,19 @@ struct Err {
 #define VAL2SFIX(VAL) ((ifix) VAL2UFIX(VAL))
 #define FIX2VAL(FIX) ((u64) (FIX) << 2)
 
-#define VAL_IS_PTR(VAL) VAL_IS_TAG(VAL, 1)
-#define VAL2PTR(TY, VAL) ((TY *) ((uptr) (VAL) & ~1))
-#define PTR2VAL(PTR) ((Val) ((uptr) (PTR) | 1))
+#define VAL_IS_PTR(VAL) (((VAL) & 1) != 0)
+#define VAL_IS_GC_PTR(VAL) VAL_IS_TAG(VAL, 1)
+#define VAL_IS_NOGC_PTR(VAL) VAL_IS_TAG(VAL, 3)
+#define VAL2PTR(TY, VAL) ((TY *) ((uptr) (VAL) & ~3))
+#define PTR2VAL_GC(PTR) ((Val) ((uptr) (PTR) | 1))
+#define PTR2VAL_NOGC(PTR) ((Val) ((uptr) (PTR) | 3))
 
-#define VAL_IS_CONST(VAL) VAL_IS_TAG(VAL, 3)
-#define VAL_TRUTHY(VAL) (((VAL) & 7) != 7)
-#define VAL_FALSY(VAL) (((VAL) & 7) == 7)
-#define VAL_FALSE ((Val) 0x0F) // 0b1111
-#define VAL_TRUE ((Val) 0x0B) // 0b1011
-#define VAL_NIL ((Val) 0x07) // 0b0111
+#define VAL_IS_CONST(VAL) VAL_IS_TAG(VAL, 2)
+#define VAL_TRUTHY(VAL) (((VAL) & 7) != 6)
+#define VAL_FALSY(VAL) (((VAL) & 7) == 6)
+#define VAL_FALSE ((Val) 0x0E) // 0b1110
+#define VAL_TRUE ((Val) 0x0A) // 0b1010
+#define VAL_NIL ((Val) 0x06) // 0b0110
 
 #define VAL_IS_CHAR(VAL) (VAL_IS_CONST(VAL) && (((VAL) & 0xFFFB) == 0))
 #define VAL2CHAR(VAL) ((u32) ((ufix) (VAL) >> 4))
@@ -157,7 +160,8 @@ extern Allocator *gs_current_alloc;
          : (gs_current_alloc = gs_wa_loop.old, 0);                      \
        gs_wa_loop.i++)
 
-#define GS_ALLOC_META(TYPE, COUNT) ((AllocMeta) { sizeof(TYPE), alignof(TYPE), (COUNT) })
+#define GS_ALLOC_ALIGN_SIZE(ALIGN, SIZE, COUNT) ((AllocMeta) { (SIZE), (ALIGN), (COUNT) })
+#define GS_ALLOC_META(TYPE, COUNT) GS_ALLOC_ALIGN_SIZE(alignof(TYPE), sizeof(TYPE), COUNT)
 
 static inline anyptr gs_alloc(AllocMeta meta) {
   return gs_current_alloc->table->alloc(gs_current_alloc, meta);

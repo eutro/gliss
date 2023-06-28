@@ -11,4 +11,17 @@ add_test(NAME "Image" COMMAND image_test)
 add_executable(grt_test grt_test.c test_driver.c)
 target_include_directories(grt_test PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(grt_test glissrt)
-add_test(NAME "Gliss Runtime" COMMAND grt_test)
+add_test(
+  NAME "Gliss Runtime"
+  COMMAND grt_test
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_executable(print_sizes print_sizes.c)
+target_include_directories(print_sizes PUBLIC ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME "Print Sizes" COMMAND print_sizes)
+
+add_executable(gc_test gc_test.c test_driver.c)
+target_include_directories(gc_test PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(gc_test glissrt)
+add_test(NAME "Garbage Collector" COMMAND gc_test)

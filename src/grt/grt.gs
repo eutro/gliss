@@ -454,9 +454,9 @@
        (write-u64le!
         bv
         (case cnst
-          ((()) 7) ;; nil
-          ((#true) 12)
-          ((#false) 15))))
+          ((()) 6) ;; nil
+          ((#true) 10)
+          ((#false) 14))))
       ((number? cnst)
        (write-u32le! bv const-direct)
        ;; avoid overflow, tags are 2 bits

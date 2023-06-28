@@ -75,13 +75,14 @@ static Err *gs_interp(
       break;
     }
     case LAMBDA: {
+      // TODO gc alloc
       InterpClosure *cls = gs_alloc(GS_ALLOC_META(InterpClosure, 1));
       u32 idx = read_u32(&ip);
       u16 arity = read_u16(&ip);
       *cls = gs_interp_closure(self->img, idx);
       // TODO save closure values
       sp -= arity;
-      *sp++ = PTR2VAL(cls);
+      *sp++ = PTR2VAL_NOGC(cls);
       break;
     }
     case CALL: {

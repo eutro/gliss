@@ -20,6 +20,7 @@ add_library(glissrt
   src/bytecode/image.c
   src/bytecode/disass.c
   src/bytecode/primitives.c
+  src/gc/gc.c
 )
 
 add_executable(gliss src/gliss.c)
