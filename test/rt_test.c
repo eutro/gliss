@@ -4,12 +4,14 @@
 Err *gs_main() {
   SymTable *table = gs_alloc_sym_table();
 
-  Symbol *how1 = gs_intern(table, GS_UTF8_CSTR("how"));
-  Symbol *how2 = gs_intern(table, GS_UTF8_CSTR("how"));
+  Symbol *how1, *how2;
+  GS_TRY(gs_intern(table, GS_UTF8_CSTR("how"), &how1));
+  GS_TRY(gs_intern(table, GS_UTF8_CSTR("how"), &how2));
   GS_FAIL_IF(how1 != how2, "Unequal symbols", NULL);
 
-  Symbol *car = gs_intern(table, GS_UTF8_CSTR("car"));
-  Symbol *concat = gs_intern(table, GS_UTF8_CSTR("concat"));
+  Symbol *car, *concat;
+  GS_TRY(gs_intern(table, GS_UTF8_CSTR("car"), &car));
+  GS_TRY(gs_intern(table, GS_UTF8_CSTR("concat"), &concat));
   GS_FAIL_IF(car == concat, "Equal symbols", NULL);
 
   gs_free_sym_table(table);

@@ -379,6 +379,11 @@ Err *gs_gc_alloc(TypeIdx ty, anyptr *out);
 Err *gs_gc_alloc_array(TypeIdx arrayTy, u32 len, anyptr *out);
 
 /**
+ * Register a write with the garbage collector.
+ */
+Err *gs_gc_write_barrier(anyptr writtenTo, anyptr ptrWritten);
+
+/**
  * Push a new generation onto the garbage collector.
  */
 Err *gs_gc_push_scope();

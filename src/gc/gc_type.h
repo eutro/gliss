@@ -24,6 +24,19 @@ typedef struct ProtoTable {
   u32 size;
 } ProtoTable;
 
+enum FieldGcTag {
+  /** Not managed by the garbage collector */
+  FieldGcNone = 0,
+  /**
+   * An tagged pointer possibly managed by the garbage collector
+   *
+   * This will be any Val field.
+   */
+  FieldGcTagged = 1,
+  /** An untagged pointer managed by the garbage collector */
+  FieldGcRaw = 2,
+};
+
 /**
  * A field of a type.
  */
@@ -32,8 +45,11 @@ typedef struct Field {
   u16 offset;
   /** How many bytes the field is. */
   u16 size;
-  /** Whether the value in the field is visible to the garbage collector. */
-  unsigned gc : 1;
+  /**
+   * How, if at all, the value in the field is visible to the garbage
+   * collector.
+   */
+  unsigned gc : 2;
 } Field;
 
 /**
@@ -122,13 +138,13 @@ typedef struct TypeInfo {
 #define GC_TYPE_STRUCT_FIELD(_i, _gc, ty, nm) ty nm;
 
 // for Field objects
-#define GC_TYPE_FIELD_IS_GC_GC(...) 1
-#define GC_TYPE_FIELD_IS_GC_NOGC(...) 0
+#define GC_TYPE_FIELD_GC_TAG_NOGC(...) FieldGcNone
+#define GC_TYPE_FIELD_GC_TAG_GC(_i, Kind) FieldGc##Kind
 #define GC_TYPE_FIELD_META(Name, GC, ty, nm)                            \
-  { .offset = offsetof(Name, nm), .size = sizeof(ty), .gc = GC_TYPE_FIELD_IS_GC_##GC },
+  { .offset = offsetof(Name, nm), .size = sizeof(ty), .gc = GC_TYPE_FIELD_GC_TAG_##GC },
 
 // for finding resizable field
-#define GC_GET_FIX_GC(ARG) GC_GET_FIX_##ARG
+#define GC_GET_FIX_GC(ARG, _i) GC_GET_FIX_##ARG
 #define GC_GET_FIX_NOGC(ARG) GC_GET_FIX_##ARG
 #define GC_GET_FIX_FIX FIX
 #define GC_GET_FIX_RSZ(ARG) RSZ
@@ -144,7 +160,7 @@ typedef struct TypeInfo {
 // for getting the resizable length offset
 #define GC_RSZ_ARG_RSZ(ARG) ARG
 #define GC_RSZ_ARG_NOGC(ARG) GC_RSZ_ARG_##ARG
-#define GC_RSZ_ARG_GC(ARG) GC_RSZ_ARG_##ARG
+#define GC_RSZ_ARG_GC(ARG, _i) GC_RSZ_ARG_##ARG
 #define GC_RSZ_OFFSET_RSZ(Name, gc) offsetof(Name, GC_RSZ_ARG_##gc) +
 #define GC_RSZ_OFFSET_FIX(_Name, _gc) 0 +
 #define GC_RSZ_OFFSET1(Name, gc, FIX) GC_RSZ_OFFSET_##FIX(Name, gc)
@@ -174,12 +190,17 @@ typedef struct TypeInfo {
  * Where GC_PROPS is either:
  *
  * - NOGC(KIND) -- a no-gc field
- * - GC(KIND) -- a gc-managed field
+ * - GC(KIND, TAG) -- a gc-managed field
  *
  * and KIND is either:
  *
  * - FIX -- a fixed-size field
  * - RSZ(len) -- a resizable field, with the length stored in the u32 field `len'
+ *
+ * and TAG is either:
+ *
+ * - Tagged - a tagged gc field
+ * - Raw - an untagged gc field
  *
  * e.g.
  *

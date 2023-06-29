@@ -23,10 +23,11 @@ extern struct ShadowStack {
 
 DEFINE_GC_TYPE(
   InterpClosure,
-  NOGC(FIX), Closure, cls,
-  NOGC(FIX), Image *, img,
-  NOGC(FIX), u32, codeRef
-  // TODO captures
+  NOGC(FIX), Closure, parent,
+  GC(FIX, Raw), Image *, img,
+  NOGC(FIX), u32, codeRef,
+  NOGC(FIX), u32, len,
+  GC(RSZ(len), Tagged), ValArray, closed
 );
 
-InterpClosure gs_interp_closure(Image *img, u32 codeRef);
+Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argc, InterpClosure **out);

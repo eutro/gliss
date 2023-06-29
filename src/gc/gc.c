@@ -20,6 +20,15 @@ TypeIdx gs_gc_typeinfo(anyptr gcPtr) {
   return GC_HEADER_TY(GC_PTR_HEADER_REF(gcPtr));
 }
 
+static u16 find_generation(anyptr gcPtr) {
+  u8 *header = GC_PTR_HEADER_REF(gcPtr);
+  if (*header == HtNormal) {
+    return find_mini_page(header)->gen;
+  } else {
+    return GC_LARGE_OBJECT(header)->gen;
+  }
+}
+
 static Err *gs_fresh_page(u16 genNo, Generation *scope, MiniPage **out) {
   // s-a ok with mini-page headers
   MiniPage *freePage = gs_global_gc->freeMiniPage;
@@ -157,43 +166,52 @@ static void gs_move_large_object(LargeObject *lo, u16 targetGen) {
   GC_HEADER_MARK(lo->data) = CtGray;
 }
 
-static Err *mark_val(Val *val, u16 dstGen, u16 minMoveGen) {
-  LOG_TRACE("Marking val; ptr: %p, val: 0x%" PRIx64, val, *val);
-
-  if (VAL_IS_GC_PTR(*val)) {
-    anyptr pointee = VAL2PTR(u8, *val);
-    u8 *header = GC_PTR_HEADER_REF(pointee);
-    switch (*header) {
-    case HtNormal: {
-      u16 itsGeneration = find_mini_page(header)->generation;
-      if (itsGeneration >= minMoveGen) {
-        anyptr moved;
-        GS_TRY(gs_move_to_generation(dstGen, header, &moved));
-        PTR_REF(u64, header) = FORWARDING_HEADER(moved);
-        *val = PTR2VAL_GC(moved);
+static Err *mark_ptr0(u8 **pointer, u16 dstGen, u16 minMoveGen) {
+  u8 *header = GC_PTR_HEADER_REF(*pointer);
+  switch (*header) {
+  case HtNormal: {
+    u16 itsGeneration = find_mini_page(header)->generation;
+    if (itsGeneration >= minMoveGen) {
+      GS_TRY(gs_move_to_generation(dstGen, header, (anyptr *)pointer));
+      PTR_REF(u64, header) = FORWARDING_HEADER(*pointer);
+    }
+    break;
+  }
+  case HtForwarding: {
+    *pointer = READ_FORWARDED(header);
+    break;
+  }
+  case HtLarge: {
+    LargeObject *lo = GC_LARGE_OBJECT(*pointer);
+    u16 itsGeneration = lo->gen;
+    if (itsGeneration > minMoveGen) {
+      if (GC_HEADER_MARK(header) == CtUnmarked) {
+        gs_move_large_object(lo, dstGen);
+        // pointer doesn't move
       }
-      break;
     }
-    case HtForwarding: {
-      *val = PTR2VAL_GC(READ_FORWARDED(header));
-      break;
-    }
-    case HtLarge: {
-      LargeObject *lo = GC_LARGE_OBJECT(pointee);
-      u16 itsGeneration = lo->gen;
-      if (itsGeneration > minMoveGen) {
-        if (GC_HEADER_MARK(header) == CtUnmarked) {
-          gs_move_large_object(lo, dstGen);
-          // pointer doesn't move
-        }
-      }
-      break;
-    }
-    }
+    break;
+  }
   }
 
-  LOG_TRACE("Marked -> 0x%" PRIx64, *val);
+  GS_RET_OK;
+}
 
+static Err *mark_ptr(u8 **ptr, u16 dstGen, u16 minMoveGen) {
+  LOG_TRACE("Marking ptr; ptr: %p, val: %p" PRIx64, ptr, *ptr);
+  GS_TRY(mark_ptr0(ptr, dstGen, minMoveGen));
+  LOG_TRACE("Marked -> %p", *ptr);
+  GS_RET_OK;
+}
+
+static Err *mark_val(Val *val, u16 dstGen, u16 minMoveGen) {
+  LOG_TRACE("Marking val; ptr: %p, val: 0x%" PRIx64, val, *val);
+  if (VAL_IS_GC_PTR(*val)) {
+    u8 *pointer = VAL2PTR(u8, *val);
+    GS_TRY(mark_ptr0(&pointer, dstGen, minMoveGen));
+    *val = PTR2VAL_GC(pointer);
+  }
+  LOG_TRACE("Marked -> 0x%" PRIx64, *val);
   GS_RET_OK;
 }
 
@@ -224,12 +242,24 @@ static Err *gs_visit_gray(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut
     if (fieldP->gc) {
       if (resizable && field == ti->layout.resizable.field - 1) {
         u8 *iter = head + fieldP->offset;
-        u8 *end = iter + count * sizeof(Val);
-        for (; iter != end; iter += sizeof(Val)) {
-          mark_val(&PTR_REF(Val, iter), dstGen, minMoveGen);
+        u8 *end;
+        if (fieldP->gc == FieldGcTagged) {
+          end = iter + count * sizeof(Val);
+          for (; iter != end; iter += sizeof(Val)) {
+            mark_val(&PTR_REF(Val, iter), dstGen, minMoveGen);
+          }
+        } else {
+          end = iter + count * sizeof(u8 *);
+          for (; iter != end; iter += sizeof(u8 *)) {
+            mark_ptr(&PTR_REF(u8 *, iter), dstGen, minMoveGen);
+          }
         }
       } else {
-        mark_val(&PTR_REF(Val, head + fieldP->offset), dstGen, minMoveGen);
+        if (fieldP->gc == FieldGcTagged) {
+          mark_val(&PTR_REF(Val, head + fieldP->offset), dstGen, minMoveGen);
+        } else {
+          mark_ptr(&PTR_REF(u8 *, head + fieldP->offset), dstGen, minMoveGen);
+        }
       }
     }
   }
@@ -604,5 +634,15 @@ Err *gs_gc_pop_scope() {
 
   LOG_DEBUG("Popped -> (free mini-pages: %" PRIu32 ")", gs_global_gc->freeMiniPagec);
 
+  GS_RET_OK;
+}
+
+Err *gs_gc_write_barrier(anyptr writtenTo, anyptr ptrWritten) {
+  u16 dstGen = find_generation(writtenTo);
+  u16 srcGen = find_generation(ptrWritten);
+  if (dstGen < srcGen) {
+    // TODO record in trail
+    u8 *srcHd = GC_PTR_HEADER_REF(ptrWritten);
+  }
   GS_RET_OK;
 }

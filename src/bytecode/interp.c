@@ -13,12 +13,15 @@ struct ShadowStack gs_shadow_stack;
 
 static Err *gs_interp_closure_call(GS_CLOSURE_ARGS);
 
-InterpClosure gs_interp_closure(Image *img, u32 codeRef) {
-  return (InterpClosure) {
-    {gs_interp_closure_call},
-    img,
-    codeRef,
-  };
+Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argv, InterpClosure **out) {
+  InterpClosure *cls;
+  GS_TRY(gs_gc_alloc_array(INTERP_CLOSURE_TYPE, argv, (anyptr *)&cls));
+  cls->parent.call = gs_interp_closure_call;
+  cls->img = img;
+  cls->codeRef = codeRef;
+  memcpy(cls->closed, args, argv);
+  *out = cls;
+  GS_RET_OK;
 }
 
 #include "le_unaligned.h"
@@ -96,7 +99,7 @@ static Err *gs_interp(
     }
     case SYM_DEREF: {
       Symbol *sym = VAL2PTR(Symbol, *--sp);
-      LOG_TRACE("Dereferenced symbol: %s", sym->name.bytes);
+      LOG_TRACE("Dereferenced symbol: %.*s", sym->name->len, sym->name->bytes);
       *sp++ = sym->value;
       break;
     }
@@ -105,10 +108,9 @@ static Err *gs_interp(
       GS_TRY(gs_gc_alloc(INTERP_CLOSURE_TYPE, (anyptr *) &cls));
       u32 idx = read_u32(&ip);
       u16 arity = read_u16(&ip);
-      *cls = gs_interp_closure(self->img, idx);
-      // TODO save closure values
       sp -= arity;
-      *sp++ = PTR2VAL_NOGC(cls);
+      GS_TRY(gs_interp_closure(self->img, idx, sp, arity, &cls));
+      *sp++ = PTR2VAL_GC(cls);
       break;
     }
     case CALL: {

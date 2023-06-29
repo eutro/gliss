@@ -9,6 +9,7 @@
 #define BIT_CAST(DstTy, SrcTy, val) (((union { DstTy dst; SrcTy src; }) {.src = (val)}).dst)
 #define PTR_REF(PointeeTy, val) (((union { PointeeTy dst; u8 src[sizeof(PointeeTy)]; } *)(u8 *)(val))->dst)
 
+/** Get the large object from the header pointer */
 #define GC_LARGE_OBJECT(ptr) (&PTR_REF(LargeObject, (u8 *)ptr - offsetof(LargeObject, data)))
 
 // OK for reads and writes, aliases as u8

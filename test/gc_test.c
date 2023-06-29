@@ -5,14 +5,14 @@
 #define DO_DECLARE_GC_METADATA 1
 DEFINE_GC_TYPE(
   Cons,
-  GC(FIX), Val, car,
-  GC(FIX), Val, cdr
+  GC(FIX, Tagged), Val, car,
+  GC(FIX, Tagged), Val, cdr
 );
 
 DEFINE_GC_TYPE(
   Array,
   NOGC(FIX), u32, len,
-  GC(RSZ(len)), ValArray, vals
+  GC(RSZ(len), Tagged), ValArray, vals
 );
 
 Err *gs_main() {
@@ -32,9 +32,6 @@ Err *gs_main() {
     GS_FAIL_IF(GC_HEADER_GEN(testHeader) != 15, "Wrong gen value", NULL);
     GS_FAIL_IF(GC_HEADER_TY(testHeader) != 20, "Wrong type value", NULL);
   }
-
-  GcAllocator gc;
-  GS_TRY(gs_gc_init(GC_DEFAULT_CONFIG, &gc));
 
   TypeIdx consIdx, arrayIdx;
   GS_TRY(gs_gc_push_type(Cons_INFO, &consIdx));
@@ -83,8 +80,6 @@ Err *gs_main() {
 
   GS_TRY(gs_gc_pop_scope());
   POP_GC_ROOTS();
-
-  GS_TRY(gs_gc_dispose(&gc));
 
   GS_RET_OK;
 }

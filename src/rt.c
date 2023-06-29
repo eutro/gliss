@@ -1,6 +1,9 @@
 #include "rt.h"
 #include "logging.h"
 
+#include "gc/gc.h"
+#include "bytecode/primitives.h"
+
 // for memcmp
 #include <string.h>
 
@@ -127,12 +130,6 @@ void gs_free_sym_table(SymTable *table) {
     *it = table->buckets,
     *end = it + table->bucketc;
   for (; it != end; ++it) {
-    Symbol
-      **sIt = it->syms,
-      **sEnd = sIt + it->len;
-    for (; sIt != sEnd; ++sIt) {
-      gs_free(*sIt, GS_ALLOC_META(Symbol, 1));
-    }
     gs_free(it->syms, GS_ALLOC_META(Symbol *, it->cap));
   }
   gs_free(table->buckets, GS_ALLOC_META(SymTableBucket, table->bucketc));
@@ -146,30 +143,35 @@ GS_TOP_CLOSURE(STATIC, symbol_trap_closure) {
     name = GS_UTF8_CSTR("{direct}");
   } else {
     Symbol *through = (Symbol *) ((u8 *) self - offsetof(Symbol, fn));
-    name = through->name;
+    name = GS_DECAY_BYTES(through->name);
   }
   LOG_ERROR("Undefined symbol called: %s", name.bytes);
   GS_FAILWITH("Called an undefined symbol", NULL);
 }
 
-Symbol *gs_intern(SymTable *table, Utf8Str name) {
+Err *gs_intern(SymTable *table, Utf8Str name, Symbol **out) {
   u64 hash = gs_hash_bytes(name);
   SymTableBucket *bucket = &table->buckets[(u32) hash % table->bucketc];
 
   Symbol **it, **end = bucket->syms + bucket->len;
   for (it = bucket->syms; it != end && *it != NULL; ++it) {
-    if (gs_bytes_cmp((*it)->name, name) == 0) {
-      return *it;
+    if (gs_bytes_cmp(GS_DECAY_BYTES((*it)->name), name) == 0) {
+      *out = *it;
+      GS_RET_OK;
     }
   }
 
   // not found, intern new
-  Symbol *val = gs_alloc(GS_ALLOC_META(Symbol, 1));
+  Symbol *val;
+  GS_TRY(gs_gc_alloc(SYMBOL_TYPE, (anyptr *)&val));
+  InlineUtf8Str *iName;
+  GS_TRY(gs_gc_alloc_array(STRING_TYPE, name.len, (anyptr *)&iName));
+  memcpy(iName->bytes, name.bytes, name.len);
   *val = (Symbol) {
-    .value = PTR2VAL_NOGC(&val->fn),
-    .name = name,
+    .fn = symbol_trap_closure,
+    .value = PTR2VAL_GC(&val->fn),
+    .name = iName,
     .isMacro = false,
-    .fn = symbol_trap_closure
   };
   if (it == end) {
     // realloc bucket
@@ -184,7 +186,8 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
   bucket->syms[bucket->len++] = val;
   table->size++;
 
-  return val;
+  *out = val;
+  GS_RET_OK;
 }
 
 Symbol *gs_reverse_lookup(SymTable *table, Val value) {

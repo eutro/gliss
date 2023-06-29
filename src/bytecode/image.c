@@ -2,6 +2,8 @@
 #include "../rt.h"
 #include "interp.h"
 #include "../logging.h"
+#include "primitives.h"
+#include "../gc/gc.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -192,24 +194,26 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
   }
   case CSymbol: {
     struct ConstBytevec *bv = (anyptr) info;
-    *out = PTR2VAL_NOGC(
+    Symbol *sym;
+    GS_TRY(
       gs_intern(
         gs_global_syms,
         (Utf8Str) {
           bv->data,
           get32le(bv->len)
-        }
+        },
+        &sym
       )
     );
+    *out = PTR2VAL_GC(sym);
     break;
   }
   case CString: {
     struct ConstBytevec *bv = (anyptr) info;
-    Utf8Str *theStr = gs_alloc(GS_ALLOC_META(Utf8Str, 1));
-    GS_FAIL_IF(!theStr, "Failed allocation", NULL);
-    theStr->len = get32le(bv->len);
-    theStr->bytes = bv->data;
-    *out = PTR2VAL_NOGC(theStr);
+    InlineUtf8Str *theStr;
+    GS_TRY(gs_gc_alloc_array(STRING_TYPE, get32le(bv->len), (anyptr *)&theStr));
+    memcpy(theStr->bytes, bv->data, theStr->len);
+    *out = PTR2VAL_GC(theStr);
     break;
   }
   case CList: {
@@ -219,11 +223,11 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
 
     Val ret = VAL_NIL;
     for (; iter != end; iter--) {
-      Val *pair = gs_alloc(GS_ALLOC_META(Val, 2));
-      GS_FAIL_IF(!pair, "Failed allocation", NULL);
+      Val *pair;
+      GS_TRY(gs_gc_alloc(CONS_TYPE, (anyptr *)&pair));
       pair[0] = baked_so_far[get32le(*iter)];
       pair[1] = ret;
-      ret = PTR2VAL_NOGC(pair);
+      ret = PTR2VAL_GC(pair);
     }
     *out = ret;
     break;

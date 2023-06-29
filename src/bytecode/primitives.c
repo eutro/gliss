@@ -1,23 +1,20 @@
 #include <string.h>
 
+#define DO_DECLARE_GC_METADATA 1
 #include "primitives.h"
 #include "../gc/gc.h"
 #include "../logging.h"
-#undef DO_DECLARE_GC_METADATA
-#define DO_DECLARE_GC_METADATA 1
 #include "interp.h"
-
-static Err *intern_fallible(SymTable *table, Symbol **out, Utf8Str str) {
-  *out = gs_intern(table, str);
-  GS_FAIL_IF(!*out, "Could not intern symbol", NULL);
-  GS_RET_OK;
-}
 
 GS_TOP_CLOSURE(STATIC, symbol_set_value) {
   GS_CHECK_ARITY(2, 1);
   Symbol *sym = VAL2PTR(Symbol, args[0]);
-  LOG_TRACE("Setting symbol: %s", sym->name.bytes);
-  sym->value = args[1];
+  LOG_TRACE("Setting symbol: %.*s", sym->name->len, sym->name->bytes);
+  Val toWrite = args[1];
+  if (VAL_IS_GC_PTR(toWrite)) {
+    gs_gc_write_barrier(&sym->value, VAL2PTR(u8, toWrite));
+  }
+  sym->value = toWrite;
   rets[0] = args[0];
   GS_RET_OK;
 }
@@ -55,37 +52,55 @@ GS_TOP_CLOSURE(STATIC, cdr) {
 
 DEFINE_GC_TYPE(
   Cons,
-  GC(FIX), Val, car,
-  GC(FIX), Val, cdr
+  GC(FIX, Tagged), Val, car,
+  GC(FIX, Tagged), Val, cdr
 );
 
+Err *gs_add_primitive_types() {
+  GS_FAIL_IF(!gs_global_gc, "No garbage collector", NULL);
+
+  TypeIdx idx;
+
+  GS_TRY(gs_gc_push_type(Symbol_INFO, &idx));
+  GS_FAIL_IF(idx != SYMBOL_TYPE, "Wrong type index", NULL);
+
+  GS_TRY(gs_gc_push_type(InlineUtf8Str_INFO, &idx));
+  GS_FAIL_IF(idx != STRING_TYPE, "Wrong type index", NULL);
+
+  GS_TRY(gs_gc_push_type(InlineBytes_INFO, &idx));
+  GS_FAIL_IF(idx != BYTESTRING_TYPE, "Wrong type index", NULL);
+
+  GS_TRY(gs_gc_push_type(Cons_INFO, &idx));
+  GS_FAIL_IF(idx != CONS_TYPE, "Wrong type index", NULL);
+
+  GS_TRY(gs_gc_push_type(NativeClosure_INFO, &idx));
+  GS_FAIL_IF(idx != NATIVE_CLOSURE_TYPE, "Wrong type index", NULL);
+
+  GS_TRY(gs_gc_push_type(InterpClosure_INFO, &idx));
+  GS_FAIL_IF(idx != INTERP_CLOSURE_TYPE, "Wrong type index", NULL);
+
+  GS_RET_OK;
+}
+
 Err *gs_add_primitives(SymTable *table) {
+  GS_FAIL_IF(!gs_global_gc, "No garbage collector", NULL);
+
   Symbol *sym;
+  NativeClosure *cls;
 
-  GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("symbol-set-value!")));
-  sym->value = PTR2VAL_NOGC(&symbol_set_value);
+#define ADD(SYM, CLS)                                                   \
+  do {                                                                  \
+    GS_TRY(gs_intern(table, GS_UTF8_CSTR(SYM), &sym));                  \
+    GS_TRY(gs_gc_alloc(NATIVE_CLOSURE_TYPE, (anyptr *)&cls));           \
+    cls->parent = (CLS);                                                \
+    sym->value = PTR2VAL_GC(cls);                                       \
+  } while(0)
 
-  GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("symbol-set-macro!")));
-  sym->value = PTR2VAL_NOGC(&symbol_set_macro);
-
-  if (gs_global_gc) {
-    TypeIdx consTy;
-    GS_TRY(gs_gc_push_type(Cons_INFO, &consTy));
-    GS_FAIL_IF(consTy != CONS_TYPE, "Wrong type index", NULL);
-
-    GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("cons")));
-    sym->value = PTR2VAL_NOGC(&cons);
-
-    GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("car")));
-    sym->value = PTR2VAL_NOGC(&car);
-
-    GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("cdr")));
-    sym->value = PTR2VAL_NOGC(&cdr);
-
-    TypeIdx interpClosureTy;
-    GS_TRY(gs_gc_push_type(InterpClosure_INFO, &interpClosureTy));
-    GS_FAIL_IF(interpClosureTy != INTERP_CLOSURE_TYPE, "Wrong type index", NULL);
-  }
+  ADD("symbol-set-value!", symbol_set_value);
+  ADD("symbol-set-macro!", symbol_set_macro);
+  ADD("cons", cons);
+  ADD("car", car);
+  ADD("cdr", cdr);
 
   GS_RET_OK;
 }

@@ -14,6 +14,8 @@ typedef struct Bytes {
 
 typedef Bytes Utf8Str;
 
+#include "gc/gc_type.h"
+
 #define GS_UTF8_CSTR(MSG) ((Utf8Str) { (u8 *) (MSG), sizeof(MSG) - 1 })
 
 typedef struct Err Err;
@@ -89,10 +91,17 @@ struct Err {
 
 typedef struct Closure Closure;
 #define GS_CLOSURE_ARGS Closure *self, u16 argc, Val *args, u16 retc, Val *rets
+typedef Err *(*ClosureFn)(GS_CLOSURE_ARGS);
 struct Closure {
-  Err *(*call)(GS_CLOSURE_ARGS);
+  ClosureFn call;
   // extra data
 };
+DEFINE_GC_TYPE(
+  NativeClosure,
+  NOGC(FIX), Closure, parent,
+  NOGC(FIX), u32, len,
+  GC(RSZ(len), Tagged), ValArray, captured
+);
 Err *gs_call(GS_CLOSURE_ARGS);
 
 #define GS_CHECK_ARG_ARITY(ARGS)                                     \
@@ -181,14 +190,25 @@ static inline void gs_free(anyptr ptr, AllocMeta meta) {
   return gs_current_alloc->table->free(gs_current_alloc, ptr, meta);
 }
 
-#include "gc/gc_type.h"
+typedef u8 u8s[1];
+DEFINE_GC_TYPE(
+  InlineBytes,
+  NOGC(FIX), u32, len,
+  NOGC(RSZ(len)), u8s, bytes
+);
+DEFINE_GC_TYPE(
+  InlineUtf8Str,
+  NOGC(FIX), u32, len,
+  NOGC(RSZ(len)), u8s, bytes
+);
+#define GS_DECAY_BYTES(VAL) ((Bytes) { (VAL)->bytes, (VAL)->len })
 
 DEFINE_GC_TYPE(
   Symbol,
-  GC(FIX), Val, value,
-  NOGC(FIX), Utf8Str, name,
-  NOGC(FIX), bool, isMacro,
-  NOGC(FIX), Closure, fn
+  NOGC(FIX), Closure, fn,
+  GC(FIX, Tagged), Val, value,
+  GC(FIX, Raw), InlineUtf8Str *, name,
+  NOGC(FIX), bool, isMacro
 );
 
 typedef struct SymTableBucket {
@@ -207,5 +227,5 @@ int gs_bytes_cmp(Bytes lhs, Bytes rhs);
 
 SymTable *gs_alloc_sym_table(void);
 void gs_free_sym_table(SymTable *table);
-Symbol *gs_intern(SymTable *table, Utf8Str name);
+Err *gs_intern(SymTable *table, Utf8Str name, Symbol **out);
 Symbol *gs_reverse_lookup(SymTable *table, Val value);
