@@ -18,7 +18,7 @@
          cons car cdr symbol?
          list? true false
          apply number? string? char?
-         eof string->number
+         eof string->number list
 
          char-whitespace?
          char->integer
@@ -32,6 +32,8 @@
          string-prefix? string-ref
          substring string-length
          symbol->bytestring
+
+         program-args
 
          raise dbg nil
          (rename-out
@@ -138,3 +140,6 @@
 
 (define (symbol->bytestring sym)
   (string->bytes/utf-8 (symbol->string sym)))
+
+(define (program-args)
+  (vector->list (current-command-line-arguments)))

@@ -254,7 +254,7 @@
        &env
        thn
        (list*
-        `(br ~lbl-end)
+        `(br ~lbl-end 1)
         `(label ~lbl-then)
         (compile
          &env
@@ -551,8 +551,7 @@
 (define opc-arg-ref 20)
 (define opc-restarg-ref 21)
 (define opc-this-ref 22)
-(define opc-this-ref 23)
-(define opc-closure-ref 24)
+(define opc-closure-ref 23)
 
 (define (cbw-emit-ldc! cw iw what)
   (let ((bv (car cw)))
@@ -612,7 +611,9 @@
          (bytevector-push!
           bv
           (case (car insn)
-            ((br) opc-br)
+            ((br)
+             (cbw-push! cw (- (caddr insn)))
+             opc-br)
             ((br-if-not)
              (cbw-push! cw -1)
              opc-br-if-not)))
@@ -643,7 +644,7 @@
                     (write-u32le-at!
                      bv
                      write-target
-                     (- ip write-target)))
+                     (- ip (+ write-target 4))))
                   (unbox found*))
                  (box-set! found* ip)
                  lbls)

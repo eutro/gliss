@@ -1,6 +1,7 @@
 #include "image.h"
 #include "le_unaligned.h"
 #include "ops.h"
+#include "../logging.h"
 
 #include <stdio.h>
 
@@ -9,7 +10,7 @@
 static void dump_constant(Image *img, u32 idx) {
   ConstInfo *ci = img->constants.values[idx];
   u32 ty = get32le(ci->ty);
-  eprintf("%u ", ty);
+  eprintf("%u " BLUE, ty);
   switch (ty) {
   case CLambda: eprintf("(CLambda)"); break;
   case CList: eprintf("(CList)"); break;
@@ -34,6 +35,7 @@ static void dump_constant(Image *img, u32 idx) {
   }
   default: eprintf("???"); break;
   }
+  eprintf(NONE);
 }
 
 void gs_stderr_dump_code(Image *img, CodeInfo *ci) {
@@ -44,47 +46,48 @@ void gs_stderr_dump_code(Image *img, CodeInfo *ci) {
   Insn *ip = ci->code;
   Insn *end = ci->code + get32le(ci->len);
   while (ip < end) {
+    eprintf("    " GREEN "%08zd" NONE ":  ", ip - ci->code);
     switch (*ip++) {
     case NOP:
-      eprintf("    0x00\tNOP\n");
+      eprintf("0x00" "\t" PURPLE "NOP\n");
       break;
     case DROP:
-      eprintf("    0x01\tDROP\n");
+      eprintf("0x01" "\t" PURPLE "DROP\n");
       break;
     case RET:
-      eprintf("    0x02 0x%02x\tRET %u\n", *ip, *ip);
+      eprintf("0x02 0x%02x" "\t" PURPLE "RET %u\n", *ip, *ip);
       ip++;
       break;
     case BR:
       eprintf(
-        "    0x03 0x%02x 0x%02x 0x%02x 0x%02x\t",
+        "0x03 0x%02x 0x%02x 0x%02x 0x%02x" "\t" PURPLE "",
         ip[0], ip[1], ip[2], ip[3]
       );
       eprintf("BR %u\n", read_u32(&ip));
       break;
     case BR_IF_NOT:
       eprintf(
-        "    0x04 0x%02x 0x%02x 0x%02x 0x%02x\t",
+        "0x04 0x%02x 0x%02x 0x%02x 0x%02x" "\t" PURPLE "",
         ip[0], ip[1], ip[2], ip[3]
       );
       eprintf("BR_IF_NOT %u\n", read_u32(&ip));
       break;
     case LDC:
       eprintf(
-        "    0x05 0x%02x 0x%02x 0x%02x 0x%02x\t",
+        "0x05 0x%02x 0x%02x 0x%02x 0x%02x" "\t" PURPLE "",
         ip[0], ip[1], ip[2], ip[3]
       );
       u32 idx = read_u32(&ip);
-      eprintf("LDC [%u]: ", idx);
+      eprintf("LDC [%u] " NONE ": ", idx);
       dump_constant(img, idx);
       eprintf("\n");
       break;
     case SYM_DEREF:
-      eprintf("    0x06\tSYM_DEREF\n");
+      eprintf("0x06" "\t" PURPLE "SYM_DEREF\n");
       break;
     case LAMBDA:
       eprintf(
-        "    0x07 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\t",
+        "0x07 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x" "\t" PURPLE "",
         ip[0], ip[1], ip[2], ip[3],
         ip[4], ip[5]
       );
@@ -94,7 +97,7 @@ void gs_stderr_dump_code(Image *img, CodeInfo *ci) {
       break;
     case CALL:
       eprintf(
-        "    0x08 0x%02x 0x%02x\tCALL argc: %u, retc: %u\n",
+        "0x08 0x%02x 0x%02x" "\t" PURPLE "CALL argc: %u, retc: %u\n",
         ip[0], ip[1],
         ip[0], ip[1]
       );
@@ -104,8 +107,9 @@ void gs_stderr_dump_code(Image *img, CodeInfo *ci) {
     case LOCAL_SET:
     case ARG_REF:
     case RESTARG_REF:
+    case CLOSURE_REF:
       eprintf(
-        "    0x%02x 0x%02x\t",
+        "0x%02x 0x%02x" "\t" PURPLE,
         ip[-1], ip[0]
       );
       switch (ip[-1]) {
@@ -113,13 +117,18 @@ void gs_stderr_dump_code(Image *img, CodeInfo *ci) {
       case LOCAL_SET: eprintf("LOCAL_SET"); break;
       case ARG_REF: eprintf("ARG_REF"); break;
       case RESTARG_REF: eprintf("RESTARG_REF"); break;
+      case CLOSURE_REF: eprintf("CLOSURE_REF"); break;
       }
       eprintf(" %u\n", ip[0]);
       ip++;
       break;
+    case THIS_REF:
+      eprintf("0x16" "\t" PURPLE "THIS_REF\n");
+      break;
     default:
-      eprintf("    0x%02x\t???\n", ip[-1]);
+      eprintf("0x%02x" "\t" PURPLE "???\n", ip[-1]);
     }
+    eprintf(NONE);
   }
 }
 

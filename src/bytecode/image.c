@@ -1,6 +1,7 @@
 #include "image.h"
 #include "../rt.h"
 #include "interp.h"
+#include "../logging.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -18,7 +19,7 @@ u64 get64le(u64le le) { return __builtin_bswap64(le.raw); }
 #endif
 
 typedef struct ImageReader {
-  u8 *buf;
+  const u8 *buf;
   u32 len;
   u32 pos;
 } ImageReader;
@@ -48,7 +49,9 @@ static u32 pad_to_align(u32 n) {
   return (n + U32_ALIGN - 1) & -U32_ALIGN;
 }
 
-Err *gs_index_image(u32 len, u8 *buf, Image *ret) {
+Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
+  LOG_DEBUG("Indexing image at %p", buf);
+
   // zero out tables
   memset(ret, 0, sizeof(Image));
 
@@ -181,13 +184,14 @@ Err *gs_index_image(u32 len, u8 *buf, Image *ret) {
 }
 
 static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
-  switch (get32le(info->ty)) {
+  u32 cTy;
+  switch (cTy = get32le(info->ty)) {
   case CDirect: {
     *out = get64le(((struct ConstDirect *) info)->value);
     break;
   }
   case CSymbol: {
-    struct ConstBytevec *bv = (struct ConstBytevec *) info;
+    struct ConstBytevec *bv = (anyptr) info;
     *out = PTR2VAL_NOGC(
       gs_intern(
         gs_global_syms,
@@ -200,7 +204,7 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
     break;
   }
   case CString: {
-    struct ConstBytevec *bv = (struct ConstBytevec *) info;
+    struct ConstBytevec *bv = (anyptr) info;
     Utf8Str *theStr = gs_alloc(GS_ALLOC_META(Utf8Str, 1));
     GS_FAIL_IF(!theStr, "Failed allocation", NULL);
     theStr->len = get32le(bv->len);
@@ -208,7 +212,26 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
     *out = PTR2VAL_NOGC(theStr);
     break;
   }
-  default: GS_FAILWITH("Unknown constant type", NULL);
+  case CList: {
+    struct ConstList *ls = (anyptr) info;
+    ConstRef *iter = ls->elements + get32le(ls->len) - 1;
+    ConstRef *end = ls->elements - 1;
+
+    Val ret = VAL_NIL;
+    for (; iter != end; iter--) {
+      Val *pair = gs_alloc(GS_ALLOC_META(Val, 2));
+      GS_FAIL_IF(!pair, "Failed allocation", NULL);
+      pair[0] = baked_so_far[get32le(*iter)];
+      pair[1] = ret;
+      ret = PTR2VAL_NOGC(pair);
+    }
+    *out = ret;
+    break;
+  }
+  default: {
+    LOG_ERROR("Unknown constant type: %" PRIu32, cTy);
+    GS_FAILWITH("Unknown constant type", NULL);
+  }
   }
 
   GS_RET_OK;

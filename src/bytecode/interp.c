@@ -2,6 +2,9 @@
 #include "../rt.h"
 #include "ops.h"
 #include "le_unaligned.h"
+#include "primitives.h"
+#include "../gc/gc.h"
+#include "../logging.h"
 
 #include <string.h> // memmove
 
@@ -20,6 +23,28 @@ InterpClosure gs_interp_closure(Image *img, u32 codeRef) {
 
 #include "le_unaligned.h"
 
+static Err *alloc_list(Val *arr, u16 len, Val *out) {
+  Val *iter = arr + len - 1;
+  Val *end = arr - 1;
+  Val ret = VAL_NIL;
+  for (; iter != end; iter--) {
+    Val *pair;
+    GS_TRY(gs_gc_alloc(CONS_TYPE, (anyptr *)&pair));
+    pair[0] = *iter;
+    pair[1] = ret;
+    ret = PTR2VAL_GC(pair);
+  }
+  *out = ret;
+  GS_RET_OK;
+}
+
+void gs_stderr_dump_closure(InterpClosure *closure) {
+  gs_stderr_dump_code(
+    closure->img,
+    closure->img->codes.values[closure->codeRef]
+  );
+}
+
 static Err *gs_interp(
   InterpClosure *self, // must be verified
   u16 argc,
@@ -34,7 +59,9 @@ static Err *gs_interp(
   Val stack[get32le(insns->maxStack)];
   Val locals[get32le(insns->locals)];
 
-  Insn *ip = insns->code;
+  Insn
+    *codeStart = insns->code,
+    *ip = codeStart;
   Val *sp = stack;
   // no end checking if the insns are verified
   while (true) {
@@ -52,8 +79,6 @@ static Err *gs_interp(
       i32 off = (i32) read_u32(&ip);
       if (VAL_FALSY(*--sp)) {
         ip += off;
-      } else {
-        ip++;
       }
       break;
     }
@@ -71,12 +96,13 @@ static Err *gs_interp(
     }
     case SYM_DEREF: {
       Symbol *sym = VAL2PTR(Symbol, *--sp);
+      LOG_TRACE("Dereferenced symbol: %s", sym->name.bytes);
       *sp++ = sym->value;
       break;
     }
     case LAMBDA: {
-      // TODO gc alloc
-      InterpClosure *cls = gs_alloc(GS_ALLOC_META(InterpClosure, 1));
+      InterpClosure *cls;
+      GS_TRY(gs_gc_alloc(INTERP_CLOSURE_TYPE, (anyptr *) &cls));
       u32 idx = read_u32(&ip);
       u16 arity = read_u16(&ip);
       *cls = gs_interp_closure(self->img, idx);
@@ -115,7 +141,24 @@ static Err *gs_interp(
       *sp++ = args[arg];
       break;
     }
-    default: GS_FAILWITH("Unrecognised opcode", NULL);
+    case RESTARG_REF: {
+      u8 arg = *ip++;
+      if (arg > argc) {
+        GS_FAILWITH("Rest argument out of range", NULL);
+      }
+      u16 size = argc - (u16) arg;
+      GS_TRY(alloc_list(args + arg, size, sp));
+      sp++;
+      break;
+    }
+    case THIS_REF: {
+      *sp++ = PTR2VAL_GC(self);
+      break;
+    }
+    default: {
+      LOG_ERROR("Unrecognised opcode: 0x%" PRIx8, ip[-1]);
+      GS_FAILWITH("Unrecognised opcode", NULL);
+    }
     }
   }
 }

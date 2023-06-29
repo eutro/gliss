@@ -1,4 +1,5 @@
 #include "rt.h"
+#include "logging.h"
 
 // for memcmp
 #include <string.h>
@@ -140,6 +141,14 @@ void gs_free_sym_table(SymTable *table) {
 
 GS_TOP_CLOSURE(STATIC, symbol_trap_closure) {
   (void) self, (void) argc, (void) args, (void) retc, (void) rets;
+  Utf8Str name;
+  if (self == &symbol_trap_closure) {
+    name = GS_UTF8_CSTR("{direct}");
+  } else {
+    Symbol *through = (Symbol *) ((u8 *) self - offsetof(Symbol, fn));
+    name = through->name;
+  }
+  LOG_ERROR("Undefined symbol called: %s", name.bytes);
   GS_FAILWITH("Called an undefined symbol", NULL);
 }
 
@@ -158,8 +167,9 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
   Symbol *val = gs_alloc(GS_ALLOC_META(Symbol, 1));
   *val = (Symbol) {
     name,
-    PTR2VAL_NOGC(&symbol_trap_closure),
+    PTR2VAL_NOGC(&val->fn),
     false, // not macro
+    symbol_trap_closure
   };
   if (it == end) {
     // realloc bucket

@@ -2,7 +2,13 @@
 
 Err *gs_main(void);
 
-int main() {
+int gs_argc;
+const char **gs_argv;
+
+int main(int argc, const char **argv) {
+  gs_argc = argc;
+  gs_argv = argv;
+
   Err *err;
   GS_WITH_ALLOC(&gs_c_alloc) {
     err = gs_main();

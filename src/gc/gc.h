@@ -463,7 +463,7 @@ Err *gs_gc_push_type(TypeInfo info, TypeIdx *outIdx);
 /**
  * Get the type info of a pointer managed by the garbage collector.
  */
-TypeInfo *gs_gc_typeinfo(anyptr gcPtr);
+TypeIdx gs_gc_typeinfo(anyptr gcPtr);
 
 /**
  * Allocate an object of the given type with the garbage collector.

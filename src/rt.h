@@ -185,6 +185,7 @@ typedef struct Symbol {
   Utf8Str name;
   Val value;
   bool isMacro;
+  Closure fn;
 } Symbol;
 
 typedef struct SymTableBucket {

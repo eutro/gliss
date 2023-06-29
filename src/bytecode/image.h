@@ -83,7 +83,7 @@ enum Sections {
 };
 
 typedef struct Image {
-  u8 *buf;
+  const u8 *buf;
   // u32 magic: "gls\0" = 0x00736c67 = 7564391
   u32 version; // 1
   // constant table
@@ -110,7 +110,7 @@ typedef struct Image {
   } start;
 } Image;
 
-Err *gs_index_image(u32 len, u8 *buf, Image *ret);
+Err *gs_index_image(u32 len, const u8 *buf, Image *ret);
 Err *gs_bake_image(Image *img);
 void gs_free_image(Image *img);
 

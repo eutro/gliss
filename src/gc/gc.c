@@ -15,10 +15,9 @@ static MiniPage *find_mini_page(anyptr ptr) {
   return (MiniPage *) ((((uptr) ptr) / MINI_PAGE_SIZE) * MINI_PAGE_SIZE);
 }
 
-TypeInfo *gs_gc_typeinfo(anyptr gcPtr) {
+TypeIdx gs_gc_typeinfo(anyptr gcPtr) {
   // s-a ok, read through union
-  u32 tyIdx = GC_HEADER_TY(GC_PTR_HEADER_REF(gcPtr));
-  return &gs_global_gc->types[tyIdx];
+  return GC_HEADER_TY(GC_PTR_HEADER_REF(gcPtr));
 }
 
 static Err *gs_fresh_page(u16 genNo, Generation *scope, MiniPage **out) {
@@ -206,7 +205,8 @@ static Err *mark_val(Val *val, u16 dstGen, u16 minMoveGen) {
 static Err *gs_visit_gray(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut) {
   LOG_TRACE("Visiting gray; ptr: %p, gen: %" PRIu16, obj, dstGen);
 
-  TypeInfo *ti = gs_gc_typeinfo(obj);
+  TypeIdx tyIdx = GC_HEADER_TY(GC_PTR_HEADER_REF(obj));
+  TypeInfo *ti = &gs_global_gc->types[tyIdx];
 
   u8 *head = obj;
   u64 count;
