@@ -27,9 +27,9 @@
 #    define FORWARDING_HEADER(forwarded) (((u64) HtForwarding << 56) | ((u64) (uptr) (forwarded) >> 8))
 #    define GC_BUILD_HEADER(tag, mark, gen, ty)           \
   (((u64) (u8) tag) |                                     \
-   ((u64) (u8) mark >> 8) |                               \
-   ((u64) (u16) gen >> 16) |                              \
-   ((u64) (u32) ty))
+   ((u64) (u8) mark << 8) |                               \
+   ((u64) (u16) gen << 16) |                              \
+   ((u64) (u32) ty << 32))
 #  else
 #    define READ_FORWARDED(headerRef) ((anyptr) (uptr) (PTR_REF(u64, (headerRef)) & 0x00FFFFFFFFFFFFFF))
 #    define FORWARDING_HEADER(forwarded) (((u64) HtForwarding << 56) | (u64) (uptr) (forwarded))

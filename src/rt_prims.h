@@ -35,6 +35,7 @@ typedef void *anyptr;
 typedef u64 Val;
 typedef i64 ifix;
 typedef u64 ufix;
+typedef Val ValArray[1];
 // Layout:
 //      [0..62][t2 t1]      (Big Endian)
 //

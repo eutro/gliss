@@ -181,12 +181,15 @@ static inline void gs_free(anyptr ptr, AllocMeta meta) {
   return gs_current_alloc->table->free(gs_current_alloc, ptr, meta);
 }
 
-typedef struct Symbol {
-  Utf8Str name;
-  Val value;
-  bool isMacro;
-  Closure fn;
-} Symbol;
+#include "gc/gc_type.h"
+
+DEFINE_GC_TYPE(
+  Symbol,
+  GC(FIX), Val, value,
+  NOGC(FIX), Utf8Str, name,
+  NOGC(FIX), bool, isMacro,
+  NOGC(FIX), Closure, fn
+);
 
 typedef struct SymTableBucket {
   Symbol **syms;

@@ -166,10 +166,10 @@ Symbol *gs_intern(SymTable *table, Utf8Str name) {
   // not found, intern new
   Symbol *val = gs_alloc(GS_ALLOC_META(Symbol, 1));
   *val = (Symbol) {
-    name,
-    PTR2VAL_NOGC(&val->fn),
-    false, // not macro
-    symbol_trap_closure
+    .value = PTR2VAL_NOGC(&val->fn),
+    .name = name,
+    .isMacro = false,
+    .fn = symbol_trap_closure
   };
   if (it == end) {
     // realloc bucket

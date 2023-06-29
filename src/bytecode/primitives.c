@@ -3,6 +3,8 @@
 #include "primitives.h"
 #include "../gc/gc.h"
 #include "../logging.h"
+#undef DO_DECLARE_GC_METADATA
+#define DO_DECLARE_GC_METADATA 1
 #include "interp.h"
 
 static Err *intern_fallible(SymTable *table, Symbol **out, Utf8Str str) {
@@ -51,51 +53,11 @@ GS_TOP_CLOSURE(STATIC, cdr) {
   GS_RET_OK;
 }
 
-static Field CONS_FIELDS[] = {
-  {
-    .offset = 0,
-    .size = sizeof(Val),
-  },
-  {
-    .offset = sizeof(Val),
-    .size = sizeof(Val),
-  }
-};
-static TypeInfo CONS_TYPEINFO = {
-  .layout = {
-    .align = alignof(Val),
-    .size = 2 * sizeof(Val),
-    .gcFieldc = 2,
-    .isArray = false,
-    .fieldc = 2,
-    .fields = CONS_FIELDS,
-  },
-  .protos = {NULL, NULL, 0},
-  .name = GS_UTF8_CSTR("cons")
-};
-
-static Field INTERP_CLOSURE_FIELDS[] = {
-  {
-    .offset = offsetof(InterpClosure, img),
-    .size = sizeof(Image),
-  },
-  {
-    .offset = offsetof(InterpClosure, codeRef),
-    .size = sizeof(u32),
-  }
-};
-static TypeInfo INTERP_CLOSURE_TYPEINFO = {
-  .layout = {
-    .align = alignof(InterpClosure),
-    .size = sizeof(InterpClosure),
-    .gcFieldc = 0,
-    .isArray = false,
-    .fieldc = 2,
-    .fields = INTERP_CLOSURE_FIELDS,
-  },
-  .protos = {NULL, NULL, 0},
-  .name = GS_UTF8_CSTR("closure")
-};
+DEFINE_GC_TYPE(
+  Cons,
+  GC(FIX), Val, car,
+  GC(FIX), Val, cdr
+);
 
 Err *gs_add_primitives(SymTable *table) {
   Symbol *sym;
@@ -108,7 +70,7 @@ Err *gs_add_primitives(SymTable *table) {
 
   if (gs_global_gc) {
     TypeIdx consTy;
-    GS_TRY(gs_gc_push_type(CONS_TYPEINFO, &consTy));
+    GS_TRY(gs_gc_push_type(Cons_INFO, &consTy));
     GS_FAIL_IF(consTy != CONS_TYPE, "Wrong type index", NULL);
 
     GS_TRY(intern_fallible(table, &sym, GS_UTF8_CSTR("cons")));
@@ -121,7 +83,7 @@ Err *gs_add_primitives(SymTable *table) {
     sym->value = PTR2VAL_NOGC(&cdr);
 
     TypeIdx interpClosureTy;
-    GS_TRY(gs_gc_push_type(INTERP_CLOSURE_TYPEINFO, &interpClosureTy));
+    GS_TRY(gs_gc_push_type(InterpClosure_INFO, &interpClosureTy));
     GS_FAIL_IF(interpClosureTy != INTERP_CLOSURE_TYPE, "Wrong type index", NULL);
   }
 

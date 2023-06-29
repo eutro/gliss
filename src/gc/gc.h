@@ -1,109 +1,9 @@
 #pragma once
 
 #include "../rt.h"
-
-// types
-
-/**
- * A protocol that can be implemented.
- */
-typedef struct ProtoKey {
-  u64 id;
-} ProtoKey;
-
-/**
- * Opaque, structure depends on protocol
- */
-typedef struct Vtable Vtable;
-
-/**
- * A table of protocol implementations for a type.
- */
-typedef struct ProtoTable {
-  /** Array of protocols implemented, sorted ascending by id. */
-  ProtoKey **keys;
-  /** The respective implementation for each protocol. */
-  Vtable **tables;
-  /** The size of the table. */
-  u32 size;
-} ProtoTable;
-
-/**
- * A field of a type.
- */
-typedef struct Field {
-  /** How many bytes from the object pointer the field is. */
-  u32 offset;
-  /** How many bytes the field is. */
-  u32 size;
-} Field;
-
-/**
- * The layout of a type, including everything needed to allocate and
- * scan it.
- */
-typedef struct TypeLayout {
-  /* needed for GC */
-  /**
-   * The minimum alignment required by the type.
-   * Must be at least 8.
-   */
-  u32 align;
-  /**
-   * The number of bytes this type takes in memory.
-   */
-  u32 size;
-  /**
-   * The number of fields this type has which should be visible to the
-   * GC. These must precede any other fields, with no padding between.
-   */
-  u32 gcFieldc;
-
-  /**
-   * Whether this type represents an array type.
-   *
-   * If it does, then a u64 size field immediately follows the header
-   * (any smaller would just introduce padding), and that many objects
-   * described otherwise by this type appear contiguously.
-   */
-  unsigned isArray : 1;
-
-  /* needed for reflection */
-  /**
-   * The number of any fields this type has, including both GC-managed
-   * and opaque fields.
-   */
-  u32 fieldc;
-  /**
-   * Array of fields this type has.
-   */
-  Field *fields;
-} TypeLayout;
-
-/**
- * Information about a type, including protocol implementations,
- * layout, and a human-readable name.
- */
-typedef struct TypeInfo {
-  /* needed for GC */
-  TypeLayout layout;
-  /* needed for runtime */
-  ProtoTable protos;
-  /* for reflection */
-  Utf8Str name;
-} TypeInfo;
+#include "gc_type.h"
 
 typedef u32 TypeIdx;
-
-// arrays are handled specially by the garbage collector
-
-/** Array of GC-managed values. */
-extern TypeIdx gs_gc_array_ty;
-/**
- * Array of bytes, with maximal alignment, so they can be interpreted
- * as anything.
- */
-extern TypeIdx gs_byte_array_ty;
 
 // allocator
 
@@ -303,6 +203,8 @@ typedef struct Generation {
 
   /**
    * Linked list of large objects that aren't put in mini-pages.
+   *
+   * New large objects are PREpended to this list.
    */
   LargeObject *largeObjects;
   /**

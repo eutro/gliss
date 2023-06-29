@@ -54,9 +54,8 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
 
   u32 size = ty->layout.size;
 
-  if (ty->layout.isArray) {
-    size *= len;
-    size += sizeof(u64);
+  if (ty->layout.resizable.field) {
+    size += len * ty->layout.fields[ty->layout.resizable.field - 1].size;
   }
   if (outSize) *outSize = size;
 
@@ -73,7 +72,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
         % align))
       % align;
     u16 position = mPage->size + paddingRequired;
-    u16 endPosition = position + sizeof(u64) + ty->layout.size;
+    u16 endPosition = position + sizeof(u64) + size;
     if (endPosition > MINI_PAGE_DATA_SIZE) {
       // ran out of space in this page, go again
       GS_TRY(gs_fresh_page(gen, scope, &mPage));
@@ -111,8 +110,8 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
   }
 
   retPtr = hdPtr + sizeof(u64);
-  if (ty->layout.isArray) {
-    PTR_REF(u64, retPtr) = len;
+  if (ty->layout.resizable.field) {
+    PTR_REF(u32, retPtr + ty->layout.resizable.offset) = len;
   }
 
   // s-a ok
@@ -127,10 +126,10 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
 static Err *gs_move_to_generation(u16 gen, u8 *header, anyptr *out) {
   TypeIdx tyIdx = GC_HEADER_TY(header);
   TypeInfo *ty = &gs_global_gc->types[tyIdx];
-  u32 len = 1;
-  if (ty->layout.isArray) {
+  u32 len = 0;
+  if (ty->layout.resizable.field) {
     // s-a ok, through union
-    len = (u32) PTR_REF(u64, (u64 *) header + 1);
+    len = (u32) PTR_REF(u32, header + sizeof(u64) + ty->layout.resizable.offset);
   }
   u32 size;
   GS_TRY(gs_alloc_in_generation(gen, len, tyIdx, out, &size));
@@ -209,22 +208,29 @@ static Err *gs_visit_gray(anyptr obj, u16 dstGen, bool moveLocal, u8 **objEndOut
   TypeInfo *ti = &gs_global_gc->types[tyIdx];
 
   u8 *head = obj;
-  u64 count;
-  if (ti->layout.isArray) {
-    count = PTR_REF(u64, obj);
-    head += sizeof(u64);
-  } else {
-    count = 1;
+  u8 *objEnd = head + ti->layout.size;
+  bool resizable = ti->layout.resizable.field != 0;
+  u32 count;
+  if (resizable) {
+    count = PTR_REF(u32, head + ti->layout.resizable.offset);
+    objEnd += count * ti->layout.fields[ti->layout.resizable.field - 1].size;
   }
-  u8 *objEnd = head + ti->layout.size * count;
 
   u16 minMoveGen = dstGen + !moveLocal;
-  for (; head != objEnd; head += ti->layout.size) {
-    // read and write all of these indirectly so we can alias the raw bytes
-    Val *iter = (Val *) head;
-    Val *end = iter + ti->layout.gcFieldc;
-    for (; iter != end; ++iter) {
-      mark_val(&PTR_REF(Val, iter), dstGen, minMoveGen);
+  Field *fields = ti->layout.fields;
+  u16 fieldc = ti->layout.fieldc;
+  for (u16 field = 0; field < fieldc; ++field) {
+    Field *fieldP = fields + field;
+    if (fieldP->gc) {
+      if (resizable && field == ti->layout.resizable.field - 1) {
+        u8 *iter = head + fieldP->offset;
+        u8 *end = iter + count * sizeof(Val);
+        for (; iter != end; iter += sizeof(Val)) {
+          mark_val(&PTR_REF(Val, iter), dstGen, minMoveGen);
+        }
+      } else {
+        mark_val(&PTR_REF(Val, head + fieldP->offset), dstGen, minMoveGen);
+      }
     }
   }
 
@@ -503,9 +509,30 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
   GS_RET_OK;
 }
 
+void free_all_larges(Generation *scope) {
+  for (LargeObject *lo = scope->largeObjects; lo != NULL;) {
+    LargeObject *nxt = lo->next;
+    u8 *header = lo->data;
+    TypeIdx ty = GC_HEADER_TY(header);
+    TypeInfo *ti = &gs_global_gc->types[ty];
+    u32 size = ti->layout.size;
+    if (ti->layout.resizable.field) {
+      size +=
+        ti->layout.fields[ti->layout.resizable.field - 1].size *
+        PTR_REF(u32, header + sizeof(u64) + ti->layout.resizable.offset);
+    }
+    gs_free(lo, GS_ALLOC_ALIGN_SIZE(ti->layout.align, size, 1));
+    lo = nxt;
+  }
+}
+
 Err *gs_gc_dispose(GcAllocator *gc) {
   LOG_DEBUG("%s", "Disposing of GC");
-  // TODO iterate over large objects
+
+  Generation *end = gc->scopes + gc->topScope + 1;
+  for (Generation *gen = gc->scopes; gen != end; ++gen) {
+    free_all_larges(gen);
+  }
 
   gs_free(gc->scopes, GS_ALLOC_META(Generation, gc->scopeCap));
   gs_free(gc->firstMiniPage, GS_ALLOC_ALIGN_SIZE(MINI_PAGE_SIZE, MINI_PAGE_SIZE, gc->miniPagec));
@@ -562,7 +589,7 @@ Err *gs_gc_push_scope() {
 Err *gs_gc_pop_scope() {
   u16 oldTop = gs_global_gc->topScope--;
 
-  LOG_DEBUG("Popping GC scope %" PRIu16, oldTop);
+  LOG_DEBUG("Popping GC scope %" PRIu16 " (free mini-pages: %" PRIu32 ")", oldTop, gs_global_gc->freeMiniPagec);
 
   GS_TRY(gs_minor_gc(oldTop, oldTop - 1));
 
@@ -571,7 +598,11 @@ Err *gs_gc_pop_scope() {
   mpTail->next = scope->current;
   scope->current->prev = mpTail;
   gs_global_gc->freeMiniPage = scope->first;
-  // TODO delete large objects
+  gs_global_gc->freeMiniPagec += scope->miniPagec;
+
+  free_all_larges(scope);
+
+  LOG_DEBUG("Popped -> (free mini-pages: %" PRIu32 ")", gs_global_gc->freeMiniPagec);
 
   GS_RET_OK;
 }

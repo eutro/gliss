@@ -1,5 +1,6 @@
 #include "../rt.h"
 #include "image.h"
+#include "../gc/gc_type.h"
 
 extern SymTable *gs_global_syms;
 
@@ -20,11 +21,12 @@ extern struct ShadowStack {
   StackFrame *top;
 } gs_shadow_stack;
 
-typedef struct InterpClosure {
-  Closure cls;
-  Image *img;
-  u32 codeRef;
+DEFINE_GC_TYPE(
+  InterpClosure,
+  NOGC(FIX), Closure, cls,
+  NOGC(FIX), Image *, img,
+  NOGC(FIX), u32, codeRef
   // TODO captures
-} InterpClosure;
+);
 
 InterpClosure gs_interp_closure(Image *img, u32 codeRef);
