@@ -2,8 +2,6 @@
 #include "image.h"
 #include "../gc/gc_type.h"
 
-extern SymTable *gs_global_syms;
-
 #ifndef GS_STACK_MAX_DEPTH
 #  define GS_STACK_MAX_DEPTH 10000
 #endif

@@ -22,6 +22,7 @@ add_library(glissrt
   src/bytecode/disass.c
   src/bytecode/primitives.c
   src/gc/gc.c
+  src/gc/gc_dump.c
 )
 
 add_library(glissmainrt

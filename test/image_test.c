@@ -1,8 +1,6 @@
 #include "bytecode/image.h"
 
 Err *gs_main(void) {
-  Image img;
-
   alignas(u32) u8 buf[] = {
     'g', 'l', 's', '\0', // magic header
     0x01, 0x00, 0x00, 0x00, // version
@@ -34,6 +32,7 @@ Err *gs_main(void) {
     0x04, 0x00, 0x00, 0x00, // start
     0x00, 0x00, 0x00, 0x00, //   code
   };
+  Image *img;
   GS_TRY(gs_index_image(sizeof(buf), buf, &img));
 
   GS_RET_OK;

@@ -10,12 +10,13 @@
 #include <string.h>
 
 // log levels from log4j
-#define LVLNO_FATAL 0
-#define LVLNO_ERROR 1
-#define LVLNO_WARN 2
-#define LVLNO_INFO 3
-#define LVLNO_DEBUG 4
-#define LVLNO_TRACE 5
+#define LVLNO_NONE 0
+#define LVLNO_FATAL 1
+#define LVLNO_ERROR 2
+#define LVLNO_WARN 3
+#define LVLNO_INFO 4
+#define LVLNO_DEBUG 5
+#define LVLNO_TRACE 6
 
 #ifndef LOG_LEVEL
 #  define LOG_LEVEL LVLNO_TRACE

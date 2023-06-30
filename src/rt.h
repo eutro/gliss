@@ -83,6 +83,7 @@ struct Err {
 #define VAL_FALSY(VAL) (((VAL) & 7) == 6)
 #define VAL_FALSE ((Val) 0x0E) // 0b1110
 #define VAL_TRUE ((Val) 0x0A) // 0b1010
+#define BOOL2VAL(X) ((X) ? VAL_TRUE : VAL_FALSE)
 #define VAL_NIL ((Val) 0x06) // 0b0110
 
 #define VAL_IS_CHAR(VAL) (VAL_IS_CONST(VAL) && (((VAL) & 0xFFFB) == 0))
@@ -211,21 +212,26 @@ DEFINE_GC_TYPE(
   NOGC(FIX), bool, isMacro
 );
 
-typedef struct SymTableBucket {
-  Symbol **syms;
-  u32 len;
-  u32 cap;
-} SymTableBucket;
-typedef struct SymTable {
-  SymTableBucket *buckets;
-  u32 bucketc;
-  u32 size;
-} SymTable;
+typedef Symbol *SymbolArray[1];
+DEFINE_GC_TYPE(
+  SymTableBucket,
+  NOGC(FIX), u32, len,
+  NOGC(FIX), u32, cap,
+  GC(RSZ(cap), Raw), SymbolArray, syms
+);
+typedef SymTableBucket *SymTableBuckets[1];
+DEFINE_GC_TYPE(
+  SymTable,
+  NOGC(FIX), u32, bucketc,
+  NOGC(FIX), u32, size,
+  GC(RSZ(bucketc), Raw), SymTableBuckets, buckets
+);
+
+extern SymTable *gs_global_syms;
 
 u64 gs_hash_bytes(Bytes bytes);
 int gs_bytes_cmp(Bytes lhs, Bytes rhs);
 
-SymTable *gs_alloc_sym_table(void);
-void gs_free_sym_table(SymTable *table);
-Err *gs_intern(SymTable *table, Utf8Str name, Symbol **out);
-Symbol *gs_reverse_lookup(SymTable *table, Val value);
+Err *gs_alloc_sym_table(void);
+Err *gs_intern(Utf8Str name, Symbol **out);
+Symbol *gs_reverse_lookup(Val value);

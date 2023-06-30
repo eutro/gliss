@@ -16,5 +16,7 @@ int main() {
   PR_O(LargeObject, data);
 
   PR(Trail);
-  PR_O(Trail, count);
+
+  PR(TrailNode);
+  PR_O(TrailNode, count);
 }

@@ -51,8 +51,11 @@ static u32 pad_to_align(u32 n) {
   return (n + U32_ALIGN - 1) & -U32_ALIGN;
 }
 
-Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
+Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
   LOG_DEBUG("Indexing image at %p", buf);
+
+  Image *ret;
+  GS_TRY(gs_gc_alloc(IMAGE_TYPE, (anyptr *)&ret));
 
   // zero out tables
   memset(ret, 0, sizeof(Image));
@@ -60,7 +63,9 @@ Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
   // must be u32 aligned
   GS_FAIL_IF((size_t) buf % U32_ALIGN != 0, "bad alignment of buffer", NULL);
 
-  ret->buf = buf;
+  GS_TRY(gs_gc_alloc_array(BYTESTRING_TYPE, len, (anyptr *)&ret->buf));
+  memcpy(ret->buf->bytes, buf, len);
+  buf = ret->buf->bytes;
   ImageReader rd = { buf, len, 0 };
 
   u32le val;
@@ -85,11 +90,9 @@ Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
     switch (section) {
     case SecConstants: {
       GS_TRY_MSG(next_u32(&rd, &val), "constant count");
-      u32 constCount = ret->constants.len = get32le(val);
-      ConstInfo **values
-        = ret->constants.values
-        = gs_alloc(GS_ALLOC_META(ConstInfo *, constCount));
-      GS_FAIL_IF(!values, "could not allocate space for constant table", NULL);
+      u32 constCount = get32le(val);
+      GS_TRY(gs_gc_alloc_array(OPAQUE_ARRAY_TYPE, constCount, (anyptr *)&ret->constants));
+      ConstInfo **values = ret->constants->values;
       for (u32 constIdx = 0; constIdx < constCount; ++constIdx) {
         ConstInfo *thisPtr = values[constIdx] = (ConstInfo *) (rd.buf + rd.pos);
         GS_TRY_MSG(skipN(&rd, sizeof(u32)), "constant tag");
@@ -134,11 +137,9 @@ Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
     }
     case SecCodes: {
       GS_TRY_MSG(next_u32(&rd, &val), "code count");
-      u32 len = ret->codes.len = get32le(val);
-      CodeInfo **values
-        = ret->codes.values
-        = gs_alloc(GS_ALLOC_META(CodeInfo *, len));
-      GS_FAIL_IF(!values, "could not allocate space for code table", NULL);
+      u32 len = get32le(val);
+      GS_TRY(gs_gc_alloc_array(OPAQUE_ARRAY_TYPE, len, (anyptr *)&ret->codes));
+      CodeInfo **values = ret->codes->values;
       for (u32 i = 0; i < len; ++i) {
         values[i] = (CodeInfo *) (rd.buf + rd.pos);
         GS_TRY_MSG(skipN(&rd, sizeof(u32) * 3 /* len, locals, maxStack */), "code header");
@@ -156,21 +157,24 @@ Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
       ret->bindings.pairs = (BindingInfo *) (rd.buf + rd.pos);
       GS_FAIL_IF(len > UINT32_MAX / sizeof(BindingInfo), "integer overflow", NULL);
       GS_TRY_MSG(skipN(&rd, len * sizeof(BindingInfo)), "binding vector");
-      for (BindingInfo *bd = ret->bindings.pairs; bd != ret->bindings.pairs + len; ++bd) {
-        GS_FAIL_IF(get32le(bd->symbol) >= ret->constants.len, "symbol constant out of bounds", NULL);
-        GS_FAIL_IF(
-          get32le(ret->constants.values[get32le(bd->symbol)]->ty) != CSymbol,
-          "not a symbol",
-          NULL
-        );
-        GS_FAIL_IF(get32le(bd->binding) >= ret->constants.len, "binding value out of bounds", NULL);
+      if (len > 0) {
+        GS_FAIL_IF(!ret->constants, "no constants", NULL);
+        for (BindingInfo *bd = ret->bindings.pairs; bd != ret->bindings.pairs + len; ++bd) {
+          GS_FAIL_IF(get32le(bd->symbol) >= ret->constants->len, "symbol constant out of bounds", NULL);
+          GS_FAIL_IF(
+            get32le(ret->constants->values[get32le(bd->symbol)]->ty) != CSymbol,
+            "not a symbol",
+            NULL
+          );
+          GS_FAIL_IF(get32le(bd->binding) >= ret->constants->len, "binding value out of bounds", NULL);
+        }
       }
       break;
     }
     case SecStart: {
       GS_TRY(next_u32(&rd, &val));
       u32 codeRef = get32le(val);
-      GS_FAIL_IF(codeRef >= ret->codes.len, "start function out of bounds", NULL);
+      GS_FAIL_IF(!ret->codes || codeRef >= ret->codes->len, "start function out of bounds", NULL);
       GS_FAIL_IF(codeRef == UINT32_MAX, "integer overflow", NULL);
       ret->start.code = codeRef + 1;
       break;
@@ -180,7 +184,9 @@ Err *gs_index_image(u32 len, const u8 *buf, Image *ret) {
     }
   }
 
-  GS_FAIL_IF(minCodeLen > ret->codes.len, "code reference out of bounds", NULL);
+  GS_FAIL_IF(minCodeLen > (!ret->codes ? 0 : ret->codes->len), "code reference out of bounds", NULL);
+
+  *retP = ret;
 
   GS_RET_OK;
 }
@@ -189,7 +195,8 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
   u32 cTy;
   switch (cTy = get32le(info->ty)) {
   case CDirect: {
-    *out = get64le(((struct ConstDirect *) info)->value);
+    struct ConstDirect *cd = (anyptr) info;
+    *out = (u64) get32le(cd->lo) | ((u64) get32le(cd->hi) << 32);
     break;
   }
   case CSymbol: {
@@ -197,7 +204,6 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
     Symbol *sym;
     GS_TRY(
       gs_intern(
-        gs_global_syms,
         (Utf8Str) {
           bv->data,
           get32le(bv->len)
@@ -242,39 +248,24 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
 }
 
 Err *gs_bake_image(Image *img) {
-  if (!img->constants.baked) {
-    img->constants.baked =
-      gs_alloc(GS_ALLOC_META(Val, img->constants.len));
-    for (u32 i = 0; i < img->constants.len; ++i) {
+  if (!img->constantsBaked) {
+    GS_TRY(gs_gc_alloc_array(ARRAY_TYPE, img->constants->len, (anyptr *)&img->constantsBaked));
+    memset(img->constantsBaked->values, 0, img->constants->len * sizeof(Val));
+    for (u32 i = 0; i < img->constants->len; ++i) {
+      Val out;
       GS_TRY(
         bake_constant(
-          img->constants.baked,
-          img->constants.values[i],
-          &img->constants.baked[i]
+          img->constantsBaked->values,
+          img->constants->values[i],
+          &out
         )
       );
+      if (VAL_IS_GC_PTR(out)) {
+        gs_gc_write_barrier(img->constantsBaked, &img->constantsBaked->values[i], VAL2PTR(u8, out), FieldGcTagged);
+      }
+      img->constantsBaked->values[i] = out;
     }
   }
 
   GS_RET_OK;
-}
-
-void gs_free_image(Image *img) {
-  gs_free(
-    img->constants.values,
-    GS_ALLOC_META(ConstInfo *, img->constants.len)
-  );
-  gs_free(
-    img->constants.baked,
-    GS_ALLOC_META(Val, img->constants.len)
-  );
-  gs_free(
-    img->codes.values,
-    GS_ALLOC_META(CodeInfo *, img->codes.len)
-  );
-  gs_free(
-    img->bindings.pairs,
-    GS_ALLOC_META(BindingInfo, img->bindings.len)
-  );
-  memset(img, 0, sizeof(Image));
 }

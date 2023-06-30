@@ -45,6 +45,8 @@ typedef struct Field {
   u16 offset;
   /** How many bytes the field is. */
   u16 size;
+  /** Name of the field */
+  Utf8Str name;
   /**
    * How, if at all, the value in the field is visible to the garbage
    * collector.
@@ -117,11 +119,16 @@ typedef struct TypeInfo {
 
 #define BAD_ARITY "this should not be called"
 #define GC_TYPE_EXPAND(X) X
-#define GC_TYPE_GET_MACRO(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, NAME, ...) NAME
+#define GC_TYPE_GET_MACRO(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, NAME, ...) NAME
 #define GC_TYPE_PASTE(Fst, ...)                 \
   GC_TYPE_EXPAND(                               \
     GC_TYPE_GET_MACRO(                          \
       __VA_ARGS__,                              \
+      BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE30,    \
+      BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE27,    \
+      BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE24,    \
+      BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE21,    \
+      BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE18,    \
       BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE15,    \
       BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE12,    \
       BAD_ARITY, BAD_ARITY, GC_TYPE_PASTE9,     \
@@ -133,6 +140,11 @@ typedef struct TypeInfo {
 #define GC_TYPE_PASTE9(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE6(Fst, f, __VA_ARGS__)
 #define GC_TYPE_PASTE12(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE9(Fst, f, __VA_ARGS__)
 #define GC_TYPE_PASTE15(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE12(Fst, f, __VA_ARGS__)
+#define GC_TYPE_PASTE18(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE15(Fst, f, __VA_ARGS__)
+#define GC_TYPE_PASTE21(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE18(Fst, f, __VA_ARGS__)
+#define GC_TYPE_PASTE24(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE21(Fst, f, __VA_ARGS__)
+#define GC_TYPE_PASTE27(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE24(Fst, f, __VA_ARGS__)
+#define GC_TYPE_PASTE30(Fst, f, gc1, ty1, nm1, ...) f(Fst, gc1, ty1, nm1) GC_TYPE_PASTE27(Fst, f, __VA_ARGS__)
 
 // for struct fields
 #define GC_TYPE_STRUCT_FIELD(_i, _gc, ty, nm) ty nm;
@@ -141,7 +153,10 @@ typedef struct TypeInfo {
 #define GC_TYPE_FIELD_GC_TAG_NOGC(...) FieldGcNone
 #define GC_TYPE_FIELD_GC_TAG_GC(_i, Kind) FieldGc##Kind
 #define GC_TYPE_FIELD_META(Name, GC, ty, nm)                            \
-  { .offset = offsetof(Name, nm), .size = sizeof(ty), .gc = GC_TYPE_FIELD_GC_TAG_##GC },
+  { .offset = offsetof(Name, nm),                                       \
+    .size = sizeof(ty),                                                 \
+    .name = GS_UTF8_CSTR(#nm),                                          \
+    .gc = GC_TYPE_FIELD_GC_TAG_##GC },
 
 // for finding resizable field
 #define GC_GET_FIX_GC(ARG, _i) GC_GET_FIX_##ARG
@@ -243,7 +258,6 @@ typedef struct TypeInfo {
   static TypeInfo Name##_INFO = {                       \
     .layout = {                                         \
       .align = alignof(Name),                           \
-                                                        \
                                                         \
       .size = sizeof(Name)                              \
       GC_TYPE_EXPAND(                                   \

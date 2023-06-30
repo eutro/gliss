@@ -8,7 +8,6 @@
 
 #include <string.h> // memmove
 
-SymTable *gs_global_syms;
 struct ShadowStack gs_shadow_stack;
 
 static Err *gs_interp_closure_call(GS_CLOSURE_ARGS);
@@ -44,7 +43,7 @@ static Err *alloc_list(Val *arr, u16 len, Val *out) {
 void gs_stderr_dump_closure(InterpClosure *closure) {
   gs_stderr_dump_code(
     closure->img,
-    closure->img->codes.values[closure->codeRef]
+    closure->img->codes->values[closure->codeRef]
   );
 }
 
@@ -58,7 +57,7 @@ static Err *gs_interp(
   GS_FAIL_IF(gs_shadow_stack.depth >= GS_STACK_MAX_DEPTH, "Stack overflow", NULL);
 
   GS_TRY(gs_bake_image(self->img));
-  CodeInfo *insns = self->img->codes.values[self->codeRef];
+  CodeInfo *insns = self->img->codes->values[self->codeRef];
   Val stack[get32le(insns->maxStack)];
   Val locals[get32le(insns->locals)];
 
@@ -94,7 +93,7 @@ static Err *gs_interp(
     }
     case LDC: {
       u32 idx = read_u32(&ip);
-      *sp++ = self->img->constants.baked[idx];
+      *sp++ = self->img->constantsBaked->values[idx];
       break;
     }
     case SYM_DEREF: {

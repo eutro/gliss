@@ -10,6 +10,7 @@ Err *gs_main() {
   GS_TRY(gs_read_file("grt_gi.gi", &allocMeta, &buf));
   GS_TRY(gs_run_raw_image(allocMeta.count, buf));
   gs_free(buf, allocMeta);
+  gs_gc_dump();
 
   GS_RET_OK;
 }

@@ -18,13 +18,11 @@ Err *gs_main() {
     u8 *buf;
     GS_TRY(gs_read_file(*it, &allocMeta, &buf));
 
-    Image img;
+    Image *img;
     GS_TRY(gs_index_image(allocMeta.count, buf, &img));
-
-    gs_stderr_dump(&img);
-
-    gs_free_image(&img);
     gs_free(buf, allocMeta);
+
+    gs_stderr_dump(img);
   }
 
   GS_RET_OK;

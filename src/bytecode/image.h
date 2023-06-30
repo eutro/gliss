@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../rt.h"
+#include "../gc/gc_type.h"
 
 // integers are encoded in little-endian byte order
 typedef struct u32le { u32 raw; } u32le;
@@ -39,7 +40,7 @@ struct ConstBytevec {
 // fixnums or global constants (nil, eof, booleans)
 struct ConstDirect {
   ConstInfo hd;
-  u64le value;
+  u32le lo, hi;
 };
 // a list of elements; can only refer to elements before it, to avoid cycles
 struct ConstList {
@@ -82,37 +83,47 @@ enum Sections {
   SecStart = 4,
 };
 
-typedef struct Image {
-  const u8 *buf;
+DEFINE_GC_TYPE(
+  Image,
+
+  GC(FIX, Raw), InlineBytes *, buf,
+  // TODO reconsider all the pointers below in case the buffer moves
+
   // u32 magic: "gls\0" = 0x00736c67 = 7564391
-  u32 version; // 1
+  NOGC(FIX), u32, version, // 1
+
   // constant table
-  struct {
+  GC(FIX, Raw), struct {
     u32 len;
-    ConstInfo **values;
-    Val *baked;
-  } constants;
+    ConstInfo *values[1];
+  } /* OpaqueArray */ *, constants,
+  GC(FIX, Raw), struct {
+    u32 len;
+    Val values[1];
+  } /* Array */ *, constantsBaked,
+
   // code table
-  struct {
+  GC(FIX, Raw), struct {
     u32 len;
-    CodeInfo **values;
-  } codes;
+    CodeInfo *values[1];
+  } /* OpaqueArray */ *, codes,
+
   // binding assoc list
-  struct {
+  NOGC(FIX), struct {
     u32 len;
     BindingInfo *pairs;
-  } bindings;
+  }, bindings,
+
   // start code block, called to run
-  struct {
+  NOGC(FIX), struct {
     // C-side: 0 if absent, 1-indexed,
     // but 0-indexed in the bytecode
     u32 code;
-  } start;
-} Image;
+  }, start
+);
 
-Err *gs_index_image(u32 len, const u8 *buf, Image *ret);
+Err *gs_index_image(u32 len, const u8 *buf, Image **ret);
 Err *gs_bake_image(Image *img);
-void gs_free_image(Image *img);
 
 void gs_stderr_dump_code(Image *img, CodeInfo *ci);
 void gs_stderr_dump(Image *img);

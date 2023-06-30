@@ -8,7 +8,7 @@
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
 
 static void dump_constant(Image *img, u32 idx) {
-  ConstInfo *ci = img->constants.values[idx];
+  ConstInfo *ci = img->constants->values[idx];
   u32 ty = get32le(ci->ty);
   eprintf("%u " BLUE, ty);
   switch (ty) {
@@ -16,7 +16,9 @@ static void dump_constant(Image *img, u32 idx) {
   case CList: eprintf("(CList)"); break;
   case CDirect: {
     struct ConstDirect *cd = (anyptr) ci;
-    eprintf("(CDirect) 0x%04lu", get64le(cd->value));
+    eprintf("(CDirect) 0x%04lu",
+            (u64) get32le(cd->lo) |
+            ((u64) get32le(cd->hi) << 32));
     break;
   }
   case CSymbol: {
@@ -138,24 +140,28 @@ void gs_stderr_dump(Image *img) {
     img->version
   );
 
-  eprintf(
-    "constants: %u\n",
-    img->constants.len
-  );
-  for (u32 i = 0; i < img->constants.len; ++i) {
-    eprintf("  [%u]: ", i);
-    dump_constant(img, i);
-    eprintf("\n");
+  if (img->constants) {
+    eprintf(
+      "constants: %u\n",
+      img->constants->len
+    );
+    for (u32 i = 0; i < img->constants->len; ++i) {
+      eprintf("  [%u]: ", i);
+      dump_constant(img, i);
+      eprintf("\n");
+    }
   }
 
-  eprintf(
-    "codes: %u\n",
-    img->codes.len
-  );
-  for (u32 i = 0; i < img->codes.len; ++i) {
-    CodeInfo *ci = img->codes.values[i];
-    eprintf("  [%u]:\n", i);
-    gs_stderr_dump_code(img, ci);
+  if (img->codes) {
+    eprintf(
+      "codes: %u\n",
+      img->codes->len
+    );
+    for (u32 i = 0; i < img->codes->len; ++i) {
+      CodeInfo *ci = img->codes->values[i];
+      eprintf("  [%u]:\n", i);
+      gs_stderr_dump_code(img, ci);
+    }
   }
 
   if (img->start.code) {

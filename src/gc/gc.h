@@ -172,16 +172,27 @@ typedef struct LargeObject {
 
 #define TRAIL_SIZE 31
 
+typedef struct TrailNode TrailNode;
 typedef struct Trail {
-  struct Trail *next;
+  struct Trail *younger, *older;
+  TrailNode *writes;
+  u16 gen;
+} Trail;
+
+struct TrailNode {
+  TrailNode *next;
   struct TrailWrite {
     /** The actual object that was written */
     anyptr object;
-    /** The target of the write, where the object was written */
-    Val *writeTarget;
+    /**
+     * The (tagged) target of the write, where the object was written,
+     * the least significant two bits are used to represent the
+     * FieldGcTag that the field has.
+     */
+    anyptr writeTarget;
   } writes[TRAIL_SIZE];
   u8 count;
-} Trail;
+};
 
 typedef struct Generation {
   /**
@@ -381,14 +392,25 @@ Err *gs_gc_alloc_array(TypeIdx arrayTy, u32 len, anyptr *out);
 /**
  * Register a write with the garbage collector.
  */
-Err *gs_gc_write_barrier(anyptr writtenTo, anyptr ptrWritten);
+Err *gs_gc_write_barrier(
+  anyptr destinationBase, // base object that <destination> is in
+  anyptr destination, // the pointer being written to
+  anyptr written, // the value written
+  unsigned fieldTag // the FieldGcTag of the field
+);
 
 /**
  * Push a new generation onto the garbage collector.
  */
-Err *gs_gc_push_scope();
+Err *gs_gc_push_scope(void);
 
 /**
  * Release the youngest generation of the garbage collector.
  */
-Err *gs_gc_pop_scope();
+Err *gs_gc_pop_scope(void);
+
+/**
+ * Dump debug information about the state of the garbage collector to stderr.
+ */
+void gs_gc_dump(void);
+void gs_gc_dump_object(anyptr obj);

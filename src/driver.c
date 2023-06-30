@@ -6,17 +6,15 @@
 #include "logging.h"
 
 Err *gs_run_raw_image(u32 size, const u8 *buf) {
-  Image img;
+  Image *img;
   GS_TRY(gs_index_image(size, buf, &img));
-  GS_TRY(gs_run_image(&img));
-  gs_free_image(&img);
+  GS_TRY(gs_run_image(img));
   GS_RET_OK;
 }
 
 Err *gs_run_image(Image *img) {
-  SymTable *table = gs_alloc_sym_table();
-  GS_TRY(gs_add_primitives(table));
-  gs_global_syms = table;
+  GS_TRY(gs_alloc_sym_table());
+  GS_TRY(gs_add_primitives());
 
   GS_FAIL_IF(!img->start.code, "No start function", NULL);
   InterpClosure *start;
@@ -33,8 +31,6 @@ Err *gs_run_image(Image *img) {
 
   POP_GC_ROOTS();
   GS_TRY(gs_gc_pop_scope());
-
-  gs_free_sym_table(table);
 
   GS_RET_OK;
 }

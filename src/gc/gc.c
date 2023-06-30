@@ -1,11 +1,9 @@
 #include "gc.h"
+#include "../logging.h"
+#include "gc_macros.h"
 
 #include <string.h> // memset, memcpy
 #include <assert.h>
-
-#include "../logging.h"
-
-#include "gc_macros.h"
 
 GcAllocator *gs_global_gc;
 
@@ -23,9 +21,12 @@ TypeIdx gs_gc_typeinfo(anyptr gcPtr) {
 static u16 find_generation(anyptr gcPtr) {
   u8 *header = GC_PTR_HEADER_REF(gcPtr);
   if (*header == HtNormal) {
-    return find_mini_page(header)->gen;
-  } else {
+    return find_mini_page(header)->generation;
+  } else if (*header == HtLarge) {
     return GC_LARGE_OBJECT(header)->gen;
+  } else {
+    LOG_FATAL("Bad header tag: %" PRIu8, *header);
+    return (u16) -1;
   }
 }
 
@@ -100,7 +101,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
     LargeObject *lo = gs_alloc(
       GS_ALLOC_ALIGN_SIZE(
         align,
-        offsetof(LargeObject, data) + size,
+        offsetof(LargeObject, data) + sizeof(u64) + size,
         1
       )
     );
@@ -108,8 +109,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
       // TODO major gc, retry
       GS_FAILWITH("OOM, couldn't allocate large object", NULL);
     }
-    scope->largeObjects->prev = lo;
-    lo->next = scope->largeObjects;
+    if ((lo->next = scope->largeObjects)) lo->next->prev = lo;
     lo->prev = NULL;
     scope->largeObjects = lo;
     lo->gen = gen;
@@ -198,8 +198,10 @@ static Err *mark_ptr0(u8 **pointer, u16 dstGen, u16 minMoveGen) {
 }
 
 static Err *mark_ptr(u8 **ptr, u16 dstGen, u16 minMoveGen) {
-  LOG_TRACE("Marking ptr; ptr: %p, val: %p" PRIx64, ptr, *ptr);
-  GS_TRY(mark_ptr0(ptr, dstGen, minMoveGen));
+  LOG_TRACE("Marking ptr; ptr: %p, val: %p", ptr, *ptr);
+  if (*ptr) {
+    GS_TRY(mark_ptr0(ptr, dstGen, minMoveGen));
+  }
   LOG_TRACE("Marked -> %p", *ptr);
   GS_RET_OK;
 }
@@ -393,59 +395,57 @@ static Err *gs_graduate_generation(u16 gen) {
 
   Generation *scope = &gs_global_gc->scopes[gen];
 
-  bool emptyTrail = true;
-  // TODO sort trail
-  u16 lastGeneration = 0;
-  for (Trail *iter = scope->trail; iter != NULL; iter = iter->next) {
-    for (u8 i = 0; i < iter->count; ++i) {
-      emptyTrail = false;
-      struct TrailWrite *w = iter->writes + i;
-      u8 *headerRef = GC_PTR_HEADER_REF(w->object);
-      switch (*headerRef) {
-      case HtNormal: {
-        // Hasn't been moved yet, allocate it in the older generation
+  Trail *trail = scope->trail;
+  while (trail && trail->older) trail = trail->older;
+  while (trail) {
+    u16 targetGen = trail->gen;
+    gs_setup_grays(targetGen);
+    for (TrailNode *next, *iter = trail->writes; iter; iter = next) {
+      next = iter->next;
+      for (u8 i = 0; i < iter->count; ++i) {
+        struct TrailWrite *w = iter->writes + i;
+        u8 *headerRef = GC_PTR_HEADER_REF(w->object);
         anyptr moved;
-        u16 thisGeneration = GC_HEADER_GEN(headerRef);
-        if (thisGeneration > lastGeneration) {
-          GS_TRY(gs_scan_grays(lastGeneration, false));
-          lastGeneration = thisGeneration;
-          gs_setup_grays(thisGeneration);
+        switch (*headerRef) {
+        case HtNormal: {
+          // Hasn't been moved yet, allocate it in the older generation
+          GS_TRY(gs_move_to_generation(targetGen, headerRef, &moved));
+          PTR_REF(u64, headerRef) = FORWARDING_HEADER(moved);
+          break;
         }
-        GS_TRY(gs_move_to_generation(thisGeneration, headerRef, &moved));
-        PTR_REF(u64, headerRef) = FORWARDING_HEADER(moved);
-        *w->writeTarget = PTR2VAL_GC(moved);
-        break;
-      }
-        // fall through
-      case HtForwarding: {
-        anyptr forwarded = READ_FORWARDED(headerRef);
-        *w->writeTarget = PTR2VAL_GC(forwarded);
-        break;
-      }
-      case HtLarge: {
-        u16 thisGeneration = GC_HEADER_GEN(headerRef);
-        if (thisGeneration > lastGeneration) {
-          GS_TRY(gs_scan_grays(lastGeneration, false));
-          lastGeneration = thisGeneration;
-          gs_setup_grays(thisGeneration);
+        case HtForwarding: {
+          moved = READ_FORWARDED(headerRef);
+          break;
         }
-        if (GC_HEADER_MARK(headerRef) == CtUnmarked) {
-          LargeObject *lo = GC_LARGE_OBJECT(headerRef);
-          u16 targetGen = GC_HEADER_GEN(headerRef);
-          gs_move_large_object(lo, targetGen);
+        case HtLarge: {
+          if (GC_HEADER_MARK(headerRef) == CtUnmarked) {
+            LargeObject *lo = GC_LARGE_OBJECT(headerRef);
+            gs_move_large_object(lo, targetGen);
+          }
+          continue;
         }
-        break;
+        default: {
+          GS_FAILWITH("Invalid header tag", NULL);
+        }
+        }
+        u8 tag = (u8) ((uptr) w->writeTarget & 3);
+        u8 *rawTarget = (u8 *) ((uptr) w->writeTarget & ~3);
+        if (tag == FieldGcTagged) {
+          PTR_REF(Val, rawTarget) = PTR2VAL_GC(moved);
+        } else if (tag == FieldGcRaw) {
+          PTR_REF(anyptr, rawTarget) = moved;
+        } else {
+          GS_FAILWITH("Invalid field tag", NULL);
+        }
       }
-      default: {
-        GS_FAILWITH("Invalid header tag", NULL);
-      }
-      }
+      gs_free(iter, GS_ALLOC_META(TrailNode, 1));
     }
+    GS_TRY(gs_scan_grays(targetGen, false));
+    Trail *next = trail->younger;
+    gs_free(trail, GS_ALLOC_META(Trail, 1));
+    trail = next;
   }
 
-  if (!emptyTrail) {
-    GS_TRY(gs_scan_grays(lastGeneration, false));
-  }
   GS_RET_OK;
 }
 
@@ -637,12 +637,86 @@ Err *gs_gc_pop_scope() {
   GS_RET_OK;
 }
 
-Err *gs_gc_write_barrier(anyptr writtenTo, anyptr ptrWritten) {
-  u16 dstGen = find_generation(writtenTo);
-  u16 srcGen = find_generation(ptrWritten);
+static Err *find_trail(Generation *scope, u16 dstGen, TrailNode **out) {
+  Trail *younger, *older, *trail = scope->trail;
+  younger = older = NULL;
+  if (!trail) {
+    goto allocateGen;
+  } else if (trail->gen == dstGen) {
+    // found
+  } else if (trail->gen < dstGen) {
+    // target is younger than trail
+    Trail *last = trail;
+    while ((trail = trail->younger) && trail->gen < dstGen) {
+      last = trail;
+    }
+    if (!(trail && trail->gen == dstGen)) {
+      // not found
+      older = last;
+      younger = trail;
+      goto allocateGen;
+    }
+  } else {
+    // target is older than trail
+    Trail *last = trail;
+    while ((trail = trail->older) && trail->gen > dstGen) {
+      last = trail;
+    }
+    if (!(trail && trail->gen == dstGen)) {
+      // not found
+      younger = last;
+      older = trail;
+      goto allocateGen;
+    }
+  }
+  if (true) {
+    TrailNode *node = trail->writes;
+    if (node->count >= TRAIL_SIZE) {
+      TrailNode *newNode = trail->writes = gs_alloc(GS_ALLOC_META(TrailNode, 1));
+      GS_FAIL_IF(!newNode, "Allocation failed", NULL);
+      newNode->next = node;
+      newNode->count = 0;
+      *out = newNode;
+    } else {
+      *out = node;
+    }
+  } else {
+  allocateGen:
+    trail = gs_alloc(GS_ALLOC_META(Trail, 1));
+    GS_FAIL_IF(!trail, "Allocation failed", NULL);
+    trail->younger = younger;
+    if (younger) younger->older = trail;
+    trail->older = older;
+    if (older) older->younger = trail;
+    trail->gen = dstGen;
+    TrailNode *writes = trail->writes = gs_alloc(GS_ALLOC_META(TrailNode, 1));
+    GS_FAIL_IF(!writes, "Allocation failed", NULL);
+    writes->next = NULL;
+    writes->count = 0;
+    *out = writes;
+  }
+  scope->trail = trail;
+
+  GS_RET_OK;
+}
+
+Err *gs_gc_write_barrier(
+  anyptr destinationBase,
+  anyptr destination,
+  anyptr written,
+  unsigned fieldTag
+) {
+  u16 dstGen = find_generation(destinationBase);
+  u16 srcGen = find_generation(written);
   if (dstGen < srcGen) {
-    // TODO record in trail
-    u8 *srcHd = GC_PTR_HEADER_REF(ptrWritten);
+    Generation *scope = &gs_global_gc->scopes[srcGen];
+    TrailNode *node;
+    GS_TRY(find_trail(scope, dstGen, &node));
+    LOG_TRACE("Written to trail; dst: %p, written: %p", destination, written);
+    node->writes[node->count++] = (struct TrailWrite) {
+      .object = written,
+      .writeTarget = (anyptr) ((uptr) destination | fieldTag),
+    };
   }
   GS_RET_OK;
 }

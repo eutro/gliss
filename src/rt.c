@@ -116,24 +116,15 @@ int gs_bytes_cmp(Bytes lhs, Bytes rhs) {
   return memcmp(lhs.bytes, rhs.bytes, (size_t) lhs.len);
 }
 
-SymTable *gs_alloc_sym_table(void) {
-  SymTable *table = gs_alloc(GS_ALLOC_META(SymTable, 1));
-  table->bucketc = 64;
-  table->size = 0;
-  table->buckets = gs_alloc(GS_ALLOC_META(SymTableBucket, table->bucketc));
-  memset(table->buckets, 0, sizeof(SymTableBucket) * table->bucketc);
-  return table;
-}
+SymTable *gs_global_syms;
 
-void gs_free_sym_table(SymTable *table) {
-  SymTableBucket
-    *it = table->buckets,
-    *end = it + table->bucketc;
-  for (; it != end; ++it) {
-    gs_free(it->syms, GS_ALLOC_META(Symbol *, it->cap));
-  }
-  gs_free(table->buckets, GS_ALLOC_META(SymTableBucket, table->bucketc));
-  gs_free(table, GS_ALLOC_META(SymTable, 1));
+Err *gs_alloc_sym_table(void) {
+  SymTable *table;
+  GS_TRY(gs_gc_alloc_array(SYM_TABLE_TYPE, 64, (anyptr *)&table));
+  table->size = 0;
+  memset(table->buckets, 0, sizeof(SymTableBucket) * table->bucketc);
+  gs_global_syms = table;
+  GS_RET_OK;
 }
 
 GS_TOP_CLOSURE(STATIC, symbol_trap_closure) {
@@ -145,19 +136,25 @@ GS_TOP_CLOSURE(STATIC, symbol_trap_closure) {
     Symbol *through = (Symbol *) ((u8 *) self - offsetof(Symbol, fn));
     name = GS_DECAY_BYTES(through->name);
   }
-  LOG_ERROR("Undefined symbol called: %s", name.bytes);
+  LOG_ERROR("Undefined symbol called: %.*s", name.len, name.bytes);
   GS_FAILWITH("Called an undefined symbol", NULL);
 }
 
-Err *gs_intern(SymTable *table, Utf8Str name, Symbol **out) {
-  u64 hash = gs_hash_bytes(name);
-  SymTableBucket *bucket = &table->buckets[(u32) hash % table->bucketc];
+Err *gs_intern(Utf8Str name, Symbol **out) {
+  SymTable *table = gs_global_syms;
 
-  Symbol **it, **end = bucket->syms + bucket->len;
-  for (it = bucket->syms; it != end && *it != NULL; ++it) {
-    if (gs_bytes_cmp(GS_DECAY_BYTES((*it)->name), name) == 0) {
-      *out = *it;
-      GS_RET_OK;
+  u64 hash = gs_hash_bytes(name);
+  SymTableBucket **bucketP = &table->buckets[(u32) hash % table->bucketc];
+  SymTableBucket *bucket = *bucketP;
+
+  Symbol **it, **end;
+  if (bucket) {
+    end = bucket->syms + bucket->len;
+    for (it = bucket->syms; it != end && *it != NULL; ++it) {
+      if (gs_bytes_cmp(GS_DECAY_BYTES((*it)->name), name) == 0) {
+        *out = *it;
+        GS_RET_OK;
+      }
     }
   }
 
@@ -173,15 +170,18 @@ Err *gs_intern(SymTable *table, Utf8Str name, Symbol **out) {
     .name = iName,
     .isMacro = false,
   };
-  if (it == end) {
+  if (!bucket || bucket->len >= bucket->cap) {
     // realloc bucket
-    u32 newCap = bucket->cap == 0 ? 1 : bucket->cap * 2;
-    bucket->syms = gs_realloc(
-      bucket->syms,
-      GS_ALLOC_META(Symbol *, bucket->cap),
-      GS_ALLOC_META(Symbol *, newCap)
-    );
-    bucket->cap = newCap;
+    u32 newCap = !bucket ? 1 : bucket->cap * 2;
+    SymTableBucket *newBucket;
+    GS_TRY(gs_gc_alloc_array(SYM_TABLE_BUCKET_TYPE, newCap, (anyptr *)&newBucket));
+    memset(newBucket->syms, 0, newBucket->cap * sizeof(Symbol *));
+    if (bucket) {
+      memcpy(newBucket->syms, bucket->syms, bucket->cap * sizeof(Symbol *));
+    }
+    newBucket->len = !bucket ? 0 : bucket->cap;
+    gs_gc_write_barrier(gs_global_syms, bucketP, newBucket, FieldGcRaw);
+    *bucketP = bucket = newBucket;
   }
   bucket->syms[bucket->len++] = val;
   table->size++;
@@ -190,13 +190,16 @@ Err *gs_intern(SymTable *table, Utf8Str name, Symbol **out) {
   GS_RET_OK;
 }
 
-Symbol *gs_reverse_lookup(SymTable *table, Val value) {
+Symbol *gs_reverse_lookup(Val value) {
+  SymTable *table = gs_global_syms;
   for (u32 i = 0; i < table->bucketc; ++i) {
-    SymTableBucket *bucket = table->buckets + i;
-    for (u32 j = 0; j < bucket->len; ++j) {
-      Symbol *sym = bucket->syms[j];
-      if (sym->value == value) {
-        return sym;
+    SymTableBucket *bucket = table->buckets[i];
+    if (bucket) {
+      for (u32 j = 0; j < bucket->len; ++j) {
+        Symbol *sym = bucket->syms[j];
+        if (sym->value == value) {
+          return sym;
+        }
       }
     }
   }
