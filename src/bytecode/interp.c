@@ -6,6 +6,8 @@
 #include "../gc/gc.h"
 #include "../logging.h"
 
+#include "tck.h"
+
 #include <string.h> // memmove
 
 struct ShadowStack gs_shadow_stack;
@@ -18,7 +20,7 @@ Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argv, InterpClosu
   cls->parent.call = gs_interp_closure_call;
   cls->img = img;
   cls->codeRef = codeRef;
-  memcpy(cls->closed, args, argv);
+  memcpy(cls->captured, args, argv * sizeof(Val));
   *out = cls;
   GS_RET_OK;
 }
@@ -85,11 +87,11 @@ static Err *gs_interp(
       break;
     }
     case RET: {
-      u8 count = *ip;
+      u8 count = *ip++;
       sp -= count;
       GS_FAIL_IF(count > retc, "Returning too many values", NULL);
       memmove(rets, sp, count * sizeof(Val));
-      return NULL;
+      GS_RET_OK;
     }
     case LDC: {
       u32 idx = read_u32(&ip);
@@ -97,7 +99,9 @@ static Err *gs_interp(
       break;
     }
     case SYM_DEREF: {
-      Symbol *sym = VAL2PTR(Symbol, *--sp);
+      Val symV = *--sp;
+      GS_FAIL_IF(!is_type(symV, SYMBOL_TYPE), "Not a symbol", NULL);
+      Symbol *sym = VAL2PTR(Symbol, symV);
       LOG_TRACE("Dereferenced symbol: %.*s", sym->name->len, sym->name->bytes);
       *sp++ = sym->value;
       break;
@@ -116,7 +120,11 @@ static Err *gs_interp(
       u8 argc = *ip++;
       u8 retc = *ip++;
       sp -= argc;
-      Closure *f = VAL2PTR(Closure, *--sp);
+      Val fv = *--sp;
+      if (!is_callable(fv)) {
+        GS_FAILWITH("Not a function", NULL);
+      }
+      Closure *f = VAL2PTR(Closure, fv);
 
       Err *err = f->call(f, argc, sp + 1, retc, sp);
       if (err) {
@@ -154,6 +162,12 @@ static Err *gs_interp(
     }
     case THIS_REF: {
       *sp++ = PTR2VAL_GC(self);
+      break;
+    }
+    case CLOSURE_REF: {
+      u8 arg = *ip++;
+      GS_FAIL_IF(arg >= self->capturec, "Captured value out of bounds", NULL);
+      *sp++ = self->captured[arg];
       break;
     }
     default: {

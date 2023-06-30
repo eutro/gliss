@@ -4,6 +4,9 @@
 #include "../logging.h"
 #include "primitives.h"
 #include "../gc/gc.h"
+#include "ops.h"
+#include "le_unaligned.h"
+#include "../util/cast.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -43,12 +46,6 @@ static Err *nextN(ImageReader *rd, anyptr out, size_t count) {
 
 static Err *next_u32(ImageReader *rd, u32le *out) {
   return next_raw(rd, out);
-}
-
-#define U32_ALIGN 4
-
-static u32 pad_to_align(u32 n) {
-  return (n + U32_ALIGN - 1) & -U32_ALIGN;
 }
 
 Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
@@ -141,13 +138,23 @@ Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
       GS_TRY(gs_gc_alloc_array(OPAQUE_ARRAY_TYPE, len, (anyptr *)&ret->codes));
       CodeInfo **values = ret->codes->values;
       for (u32 i = 0; i < len; ++i) {
-        values[i] = (CodeInfo *) (rd.buf + rd.pos);
-        GS_TRY_MSG(skipN(&rd, sizeof(u32) * 3 /* len, locals, maxStack */), "code header");
+        CodeInfo *ci = values[i] = (CodeInfo *) (rd.buf + rd.pos);
+        GS_TRY_MSG(skipN(&rd, sizeof(u32) * 4 /* len, locals, maxStack, stackMapLen */), "code header");
         u32 len = get32le(values[i]->len);
         u32 paddedLen = pad_to_align(len);
         GS_FAIL_IF(paddedLen < len, "integer overflow", NULL);
         GS_TRY_MSG(skipN(&rd, paddedLen), "code instructions");
-        // TODO validate code?
+        u32 stackMapLen = get32le(ci->stackMapLen);
+        GS_FAIL_IF(stackMapLen > UINT32_MAX / 4, "integer overflow", NULL);
+        GS_TRY_MSG(skipN(&rd, stackMapLen * 8), "code stack map");
+        Err *err = gs_verify_code(ret, ci);
+        if (err) {
+          LOG_ERROR("Failed verification of code %" PRIu32, i);
+          if (LOG_LEVEL >= LVLNO_ERROR) {
+            gs_stderr_dump_code(ret, ci);
+          }
+          GS_FAILWITH("Verification failed", err);
+        }
       }
       break;
     }
@@ -243,6 +250,194 @@ static Err *bake_constant(Val *baked_so_far, ConstInfo *info, Val *out) {
     GS_FAILWITH("Unknown constant type", NULL);
   }
   }
+
+  GS_RET_OK;
+}
+
+static Err *lookup_label(
+  u32 len, StackMapEntry *map,
+  u32 key, u32 *stackOut
+) {
+  StackMapEntry *first = map;
+  u32 count = len;
+
+  while (count > 0) {
+    u32 step = count / 2;
+    StackMapEntry *it = first + step;
+    u32 itPos = get32le(it->pos);
+
+    if (itPos == key) {
+      *stackOut = get32le(it->height);
+      GS_RET_OK;
+    } else if (itPos < key) {
+      first = ++it;
+      count -= step + 1;
+    } else {
+      count = step;
+    }
+  }
+
+  GS_FAILWITH("Entry not found", NULL);
+}
+
+Err *gs_verify_code(Image *img, CodeInfo *ci) {
+  u32 maxStack = get32le(ci->maxStack);
+  u32 maxLocals = get32le(ci->locals);
+
+  u32 codeLen = get32le(ci->len);
+  Insn *ip = ci->code;
+  Insn *start = ip;
+  Insn *end = ip + codeLen;
+
+  u32 stackMapLen = get32le(ci->stackMapLen);
+  StackMapEntry *stackMap =
+    &PTR_REF(StackMapEntry, ip + pad_to_align(codeLen));
+
+  if (stackMapLen > 0) {
+    u32 lastIp = get32le(stackMap->pos);
+    for (u32 i = 1; i < stackMapLen; i++) {
+      u32 thisIp = get32le(stackMap[i].pos);
+      // TODO be stricter
+      // GS_FAIL_IF(thisIp == lastIp, "Duplicate stack map entry", NULL);
+      GS_FAIL_IF(thisIp < lastIp, "Out of order stack map", NULL);
+      lastIp = thisIp;
+    }
+  }
+
+  u32 stackSz = 0;
+  bool unreachable = false;
+
+#define POP(N) \
+  do {                                                      \
+    if (!unreachable) {                                     \
+      GS_FAIL_IF(stackSz < (N), "Stack underflow", NULL);   \
+      stackSz -= (N);                                       \
+    }                                                       \
+  } while(0)
+#define PUSH(N)                                                 \
+  do {                                                          \
+    if (!unreachable) {                                         \
+      stackSz += (N);                                           \
+      GS_FAIL_IF(stackSz > maxStack, "Stack overflow", NULL);   \
+    }                                                           \
+  } while(0)
+#define EXPECT_INSNS(N)                                             \
+  do {                                                              \
+    GS_FAIL_IF(end - ip < (N), "Unexpected end of code", NULL);     \
+  } while(0)
+
+  StackMapEntry *smIter = stackMap;
+  StackMapEntry *smEnd = smIter + stackMapLen;
+  u32 smIPos = smIter == smEnd ? 0 : get32le(smIter->pos);
+  while (ip < end) {
+    while (smIter != smEnd && ip - start >= smIPos) {
+      GS_FAIL_IF(ip - start != smIPos, "Stack map entry is not instruction head", NULL);
+      u32 height = get32le(smIter->height);
+      GS_FAIL_IF(!unreachable && stackSz != height, "Stack height mismatch", NULL);
+      stackSz = height;
+      unreachable = false;
+      smIter++;
+      smIPos = get32le(smIter->pos);
+    }
+    switch (*ip++) {
+    case NOP: break;
+    case DROP: {
+      POP(1);
+      break;
+    }
+    case BR:
+    case BR_IF_NOT: {
+      Insn insn = ip[-1];
+      EXPECT_INSNS(4);
+      i32 off = (i32) read_u32(&ip);
+      GS_FAIL_IF(off < start - ip || end - ip <= off, "Jump out of bounds", NULL);
+      u32 targetIc = ip - start + off;
+      u32 targetStack;
+      GS_TRY(lookup_label(stackMapLen, stackMap, targetIc, &targetStack));
+      if (insn == BR_IF_NOT) {
+        POP(1);
+      }
+      GS_FAIL_IF(!unreachable && targetStack != stackSz, "Jump target stack height mismatch", NULL);
+      if (insn == BR) {
+        unreachable = true;
+      }
+      break;
+    }
+    case RET: {
+      EXPECT_INSNS(1);
+      u8 count = *ip++;
+      POP(count);
+      unreachable = true;
+      break;
+    }
+    case LDC: {
+      EXPECT_INSNS(4);
+      u32 idx = read_u32(&ip);
+      GS_FAIL_IF(!img->constants || idx >= img->constants->len, "Constant out of bounds", NULL);
+      PUSH(1);
+      break;
+    }
+    case SYM_DEREF: {
+      POP(1);
+      PUSH(1);
+      break;
+    }
+    case LAMBDA: {
+      EXPECT_INSNS(6);
+      u32 idx = read_u32(&ip);
+      u16 arity = read_u16(&ip);
+      POP(arity);
+      GS_FAIL_IF(!img->codes || idx >= img->codes->len, "Code out of range", NULL);
+      PUSH(1);
+      break;
+    }
+    case CALL: {
+      EXPECT_INSNS(2);
+      u8 argc = *ip++;
+      u8 retc = *ip++;
+      POP((u32) (argc + 1));
+      PUSH(retc);
+      break;
+    }
+    case LOCAL_REF:
+    case LOCAL_SET: {
+      EXPECT_INSNS(1);
+      u8 local = *ip++;
+      GS_FAIL_IF(local >= maxLocals, "Local out of range", NULL);
+      if (ip[-2] == LOCAL_REF) {
+        PUSH(1);
+      } else {
+        POP(1);
+      }
+      break;
+    }
+    case ARG_REF:
+    case RESTARG_REF: {
+      EXPECT_INSNS(1);
+      ip++;
+      PUSH(1);
+      break;
+    }
+    case THIS_REF: {
+      PUSH(1);
+      break;
+    }
+    case CLOSURE_REF: {
+      // TODO count closure args statically?
+      EXPECT_INSNS(1);
+      ip++;
+      PUSH(1);
+      break;
+    }
+    default: {
+      LOG_ERROR("Unrecognised opcode: 0x%" PRIx8, ip[-1]);
+      GS_FAILWITH("Unrecognised opcode", NULL);
+    }
+    }
+  }
+
+  GS_FAIL_IF(!unreachable, "Control may run off the end of function", NULL);
+  GS_FAIL_IF(smIter != smEnd, "Stack map has too many entries", NULL);
 
   GS_RET_OK;
 }

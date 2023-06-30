@@ -18,7 +18,7 @@
          cons car cdr symbol?
          list? true false
          apply number? string? char?
-         eof string->number list
+         eof string->number
 
          char-whitespace?
          char->integer

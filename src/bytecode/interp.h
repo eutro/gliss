@@ -24,8 +24,8 @@ DEFINE_GC_TYPE(
   NOGC(FIX), Closure, parent,
   GC(FIX, Raw), Image *, img,
   NOGC(FIX), u32, codeRef,
-  NOGC(FIX), u32, len,
-  GC(RSZ(len), Tagged), ValArray, closed
+  NOGC(FIX), u32, capturec,
+  GC(RSZ(capturec), Tagged), ValArray, captured
 );
 
 Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argc, InterpClosure **out);

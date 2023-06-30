@@ -1,5 +1,6 @@
 #include "image.h"
 #include "le_unaligned.h"
+#include "../util/cast.h"
 #include "ops.h"
 #include "../logging.h"
 
@@ -44,9 +45,18 @@ void gs_stderr_dump_code(Image *img, CodeInfo *ci) {
   eprintf("   len: %u\n", get32le(ci->len));
   eprintf("   maxStack: %u\n", get32le(ci->maxStack));
   eprintf("   locals: %u\n", get32le(ci->locals));
-  eprintf("   code:\n");
+
+  u32 codeLen = get32le(ci->len);
   Insn *ip = ci->code;
-  Insn *end = ci->code + get32le(ci->len);
+  Insn *end = ci->code + codeLen;
+
+  eprintf("   stack map:\n");
+  StackMapEntry *stackMap = &PTR_REF(StackMapEntry, ci->code + pad_to_align(codeLen));
+  StackMapEntry *stackMapEnd = stackMap + get32le(ci->stackMapLen);
+  for (; stackMap != stackMapEnd; ++stackMap) {
+    eprintf("    " GREEN "%08" PRIu32 NONE ": %" PRIu32 "\n", get32le(stackMap->pos), get32le(stackMap->height));
+  }
+  eprintf("   code:\n");
   while (ip < end) {
     eprintf("    " GREEN "%08zd" NONE ":  ", ip - ci->code);
     switch (*ip++) {

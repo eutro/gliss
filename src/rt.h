@@ -85,6 +85,7 @@ struct Err {
 #define VAL_TRUE ((Val) 0x0A) // 0b1010
 #define BOOL2VAL(X) ((X) ? VAL_TRUE : VAL_FALSE)
 #define VAL_NIL ((Val) 0x06) // 0b0110
+#define VAL_EOF ((Val) 0x08) // 0b1000
 
 #define VAL_IS_CHAR(VAL) (VAL_IS_CONST(VAL) && (((VAL) & 0xFFFB) == 0))
 #define VAL2CHAR(VAL) ((u32) ((ufix) (VAL) >> 4))

@@ -67,8 +67,18 @@ typedef struct CodeInfo {
   u32le len;
   u32le maxStack;
   u32le locals;
+  u32le stackMapLen; // in entries
   Insn code[1]; // padded to multiple of 4
+  // code followed (after padding) by stack map:
+  //
+  // StackMapEntry(*)[]
+  //
+  // for each jump target
 } CodeInfo;
+typedef struct StackMapEntry {
+  u32le pos;
+  u32le height;
+} StackMapEntry;
 
 // an association of a symbol with a binding
 typedef struct BindingInfo {
@@ -122,6 +132,7 @@ DEFINE_GC_TYPE(
   }, start
 );
 
+Err *gs_verify_code(Image *img, CodeInfo *ci);
 Err *gs_index_image(u32 len, const u8 *buf, Image **ret);
 Err *gs_bake_image(Image *img);
 

@@ -19,3 +19,9 @@ static inline u32 read_u32(u8 **ip) {
     ((u32) lh << INSN_BITS) |
     (u32) ll;
 }
+
+#define U32_ALIGN 4
+
+static inline u32 pad_to_align(u32 n) {
+  return (n + U32_ALIGN - 1) & -U32_ALIGN;
+}

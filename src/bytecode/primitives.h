@@ -4,6 +4,11 @@
 #include "../gc/gc_type.h"
 
 DEFINE_GC_TYPE(
+  Cons,
+  GC(FIX, Tagged), Val, car,
+  GC(FIX, Tagged), Val, cdr
+);
+DEFINE_GC_TYPE(
   Box,
   GC(FIX, Tagged), Val, value
 );
