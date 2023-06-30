@@ -1,10 +1,10 @@
 #pragma once
 
 #include <stdalign.h>
+#include <string.h>
 
 #include "rt_prims.h"
 
-#define GS_C_STDIO
 #define GS_C_ALLOC
 
 typedef struct Bytes {
@@ -17,27 +17,60 @@ typedef Bytes Utf8Str;
 #include "gc/gc_type.h"
 
 #define GS_UTF8_CSTR(MSG) ((Utf8Str) { (u8 *) (MSG), sizeof(MSG) - 1 })
+#define GS_UTF8_CSTR_DYN(MSG) ((Utf8Str) { (u8 *) (MSG), strlen(MSG) })
 
 typedef struct Err Err;
-struct Err {
+
+#ifndef GS_ERR_MAX_TRACE
+#define GS_ERR_MAX_TRACE 128
+#endif
+
+typedef struct ErrFrame {
   Utf8Str msg;
+  Utf8Str func;
   Utf8Str file;
   u32 line;
-  Err *cause;
+} ErrFrame;
+
+struct Err {
+  Val exn;
+  u32 len;
+  ErrFrame frames[GS_ERR_MAX_TRACE];
 };
+extern Err gs_current_err;
 
-#define GS_ERR_HERE(MSG, CAUSE) \
-  ((Err) { GS_UTF8_CSTR(MSG), GS_UTF8_CSTR(__FILE__), __LINE__, (CAUSE) })
+#define GS_FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+#define GS_ERR_FRAME(MSG, FUNC, FILE, LINE)     \
+  ((ErrFrame) {                                 \
+    .msg = (MSG),                               \
+    .func = (FUNC),                             \
+    .file = (FILE),                             \
+    .line = (LINE) })
+#define GS_ERR_HERE(MSG)                        \
+  ((ErrFrame) {                                 \
+    .msg = GS_UTF8_CSTR(MSG),                   \
+    .func = GS_UTF8_CSTR(__func__),             \
+    .file = GS_UTF8_CSTR_DYN(GS_FILENAME),      \
+    .line = __LINE__ })
 
-#define GS_FW_ERR1(LINE) gs_fw_err_##LINE
-#define GS_FW_ERR0(LINE) GS_FW_ERR1(LINE)
-#define GS_FW_ERR GS_FW_ERR0(__LINE__)
-#define GS_FAILWITH(MSG, CAUSE)                                      \
-  do {                                                               \
-    /* note: re-entrant calls may mean this forms a cycle */         \
-    static Err GS_FW_ERR;                                            \
-    GS_FW_ERR = GS_ERR_HERE((MSG), (CAUSE));                         \
-    return &GS_FW_ERR;                                               \
+#define GS_FAILWITH_FRAME(FRAME, CAUSE)                                 \
+  do {                                                                  \
+    if (!CAUSE) {                                                       \
+      gs_current_err.exn = VAL_NIL;                                     \
+      gs_current_err.len = 0;                                           \
+    }                                                                   \
+    if (gs_current_err.len < GS_ERR_MAX_TRACE) {                        \
+      gs_current_err.frames[gs_current_err.len] = (FRAME);              \
+    }                                                                   \
+    gs_current_err.len++;                                               \
+    return &gs_current_err;                                             \
+  } while(0)
+#define GS_FAILWITH(MSG, CAUSE) GS_FAILWITH_FRAME(GS_ERR_HERE(MSG), CAUSE)
+#define GS_FAILWITH_VAL(VAL)                    \
+  do {                                          \
+    gs_current_err.len = 0;                     \
+    gs_current_err.exn = (VAL);                 \
+    return &gs_current_err;                     \
   } while(0)
 
 #define NO_CLEANUP while(0)
@@ -125,27 +158,7 @@ Err *gs_call(GS_CLOSURE_ARGS);
   GS_VIS_##VIS Closure NAME = { NAME##_impl };       \
   static Err *NAME##_impl(GS_CLOSURE_ARGS)
 
-typedef struct OutStream {
-  Closure *write; // (Bytes *slice) -> ()
-  Closure *flush; // () -> ()
-} OutStream;
-
-#ifdef GS_C_STDIO
-#include <stdio.h>
-struct GS_FOSClosure {
-  Closure cls;
-  FILE *file;
-};
-struct GS_FOSBuf {
-  struct GS_FOSClosure write, flush;
-};
-OutStream gs__file_outstream(FILE *file, struct GS_FOSBuf *buf);
-#define GS_FILE_OUTSTREAM(NAME, FILE)                                 \
-  struct GS_FOSBuf __gs_fos_buf_##NAME;                               \
-  OutStream NAME = gs__file_outstream((FILE), &__gs_fos_buf_##NAME);
-#endif
-
-Err *gs_write_error(Err *err, OutStream *stream);
+void gs_write_error(Err *err);
 
 typedef struct AllocMeta {
   u32 size;

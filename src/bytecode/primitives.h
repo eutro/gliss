@@ -49,5 +49,7 @@ DEFINE_GC_TYPE(
 #define IMAGE_TYPE 12
 #define BOX_TYPE 13
 
+void pr0(anyptr fp, Val exn);
+
 Err *gs_add_primitive_types(void);
 Err *gs_add_primitives(void);

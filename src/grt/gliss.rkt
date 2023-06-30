@@ -28,6 +28,8 @@
          bitwise-and bitwise-ior
          arithmetic-shift
 
+         open-file write-file
+
          list->string string->list string=?
          string-prefix? string-ref
          substring string-length
@@ -41,6 +43,7 @@
           [gl-if if]
           [gl-lambda lambda]
           [gl-quote quote]
+          [gl-eval eval]
           [string->symbol intern]
           [set-box! box-set!]
           [make-bytes new-bytestring]
@@ -56,8 +59,7 @@
          #%top-interaction
          #%datum
          #%top
-         (for-syntax #%datum)
-         local-require)
+         (for-syntax #%datum))
 
 (define-syntax true (make-variable-like-transformer #'#t))
 (define-syntax false (make-variable-like-transformer #'#f))
@@ -83,13 +85,18 @@
 (define (symbol-macro-name sym)
   (string->symbol (string-append (symbol->string sym) "/macro")))
 
+(define (gl-eval expr)
+  (eval expr))
+
 (define (symbol-set-macro! sym macro?)
-  (define value (namespace-variable-value sym))
-  (when macro?
-    (define (stx-transformer stx)
-      (datum->syntax stx (apply value (cdr (syntax->datum stx))) stx))
-    (eval `(define-syntax ,sym ,stx-transformer))
-    (namespace-set-variable-value! (symbol-macro-name sym) value)))
+  (define sentinel (box nil))
+  (define value (namespace-variable-value sym #t (lambda () sentinel)))
+  (unless (eq? sentinel value)
+    (when macro?
+      (define (stx-transformer stx)
+        (datum->syntax stx (apply value (cdr (syntax->datum stx))) stx))
+      (eval `(define-syntax ,sym ,stx-transformer))
+      (namespace-set-variable-value! (symbol-macro-name sym) value))))
 
 (define (symbol-macro-value sym)
   (namespace-variable-value (symbol-macro-name sym) #t (lambda () null)))
@@ -143,3 +150,14 @@
 
 (define (program-args)
   (vector->list (current-command-line-arguments)))
+
+(define (open-file file-name)
+   (local-require racket/base racket/port)
+   (box (call-with-input-file* file-name (λ (f) (port->list read-char f)))))
+
+ (define (write-file file-name data)
+   (local-require racket/base racket/port)
+   (call-with-output-file*
+     file-name
+     (λ (f) (write-bytes data f))
+     #:exists 'replace))

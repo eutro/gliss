@@ -10,7 +10,14 @@ IMPL("symbol-set-value!", symbol_set_value, {
     LOG_TRACE("Setting symbol: %.*s", sym->name->len, sym->name->bytes);
     Val toWrite = args[1];
     if (VAL_IS_GC_PTR(toWrite)) {
-      gs_gc_write_barrier(sym, &sym->value, VAL2PTR(u8, toWrite), FieldGcTagged);
+      GS_TRY(gs_gc_write_barrier(sym, &sym->value, VAL2PTR(u8, toWrite), FieldGcTagged));
+      if (is_type(toWrite, INTERP_CLOSURE_TYPE)) {
+        InterpClosure *twCls = VAL2PTR(InterpClosure, toWrite);
+        if (twCls->assignedTo == NULL) {
+          GS_TRY(gs_gc_write_barrier(twCls, &twCls->assignedTo, sym, FieldGcRaw));
+          twCls->assignedTo = sym;
+        }
+      }
     }
     sym->value = toWrite;
     rets[0] = args[0];
@@ -157,7 +164,7 @@ IMPL("box-set!", box_set, {
     GS_FAIL_IF(!VAL_IS_GC_PTR(arg) || gs_gc_typeinfo(val = VAL2PTR(u8, arg)) != BOX_TYPE, "Not a box", NULL);
     Val *target = &PTR_REF(Box, val).value;
     if (VAL_IS_GC_PTR(toWrite)) {
-      gs_gc_write_barrier(val, target, VAL2PTR(u8, toWrite), FieldGcTagged);
+      GS_TRY(gs_gc_write_barrier(val, target, VAL2PTR(u8, toWrite), FieldGcTagged));
     }
     rets[0] = *target = toWrite;
     GS_RET_OK;
@@ -173,4 +180,10 @@ IMPL("new-bytestring", new_bytestring, {
     memset(PTR_REF(InlineBytes, ret).bytes, 0, len);
     rets[0] = PTR2VAL_GC(ret);
     GS_RET_OK;
+  });
+
+IMPL("raise", raise, {
+    GS_CHECK_ARITY(1, 1);
+    GS_FAIL_IF(args[0] == VAL_NIL, "Cannot raise nil", NULL);
+    GS_FAILWITH_VAL(args[0]);
   });

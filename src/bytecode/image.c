@@ -456,7 +456,7 @@ Err *gs_bake_image(Image *img) {
         )
       );
       if (VAL_IS_GC_PTR(out)) {
-        gs_gc_write_barrier(img->constantsBaked, &img->constantsBaked->values[i], VAL2PTR(u8, out), FieldGcTagged);
+        GS_TRY(gs_gc_write_barrier(img->constantsBaked, &img->constantsBaked->values[i], VAL2PTR(u8, out), FieldGcTagged));
       }
       img->constantsBaked->values[i] = out;
     }

@@ -18,6 +18,7 @@ Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argv, InterpClosu
   InterpClosure *cls;
   GS_TRY(gs_gc_alloc_array(INTERP_CLOSURE_TYPE, argv, (anyptr *)&cls));
   cls->parent.call = gs_interp_closure_call;
+  cls->assignedTo = NULL;
   cls->img = img;
   cls->codeRef = codeRef;
   memcpy(cls->captured, args, argv * sizeof(Val));
@@ -179,14 +180,25 @@ static Err *gs_interp(
 }
 
 static Err *gs_interp_closure_call(GS_CLOSURE_ARGS) {
-  StackFrame frame = {
-    gs_shadow_stack.top,
-    FKInterp,
-  };
-  gs_shadow_stack.top = &frame;
+  InterpClosure *closureSelf = (InterpClosure *)self;
   gs_shadow_stack.depth++;
-  Err *err = gs_interp((InterpClosure *) self, argc, args, retc, rets);
+  Err *err = gs_interp(closureSelf, argc, args, retc, rets);
   gs_shadow_stack.depth--;
-  gs_shadow_stack.top = frame.next;
+  if (err) {
+#define FAIL                                            \
+    GS_FAILWITH_FRAME(                                  \
+      GS_ERR_FRAME(                                     \
+        GS_UTF8_CSTR("lambda body"),                    \
+        closureSelf->assignedTo                         \
+        ? GS_DECAY_BYTES(closureSelf->assignedTo->name) \
+        : GS_UTF8_CSTR("{unknown}"),                    \
+        GS_UTF8_CSTR_DYN(GS_FILENAME),                  \
+        __LINE__                                        \
+      ),                                                \
+        err                                             \
+    )
+    FAIL;
+#undef FAIL
+  }
   return err;
 }

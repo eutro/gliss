@@ -6,17 +6,8 @@
 #  define GS_STACK_MAX_DEPTH 10000
 #endif
 
-typedef struct StackFrame {
-  struct StackFrame *next;
-  enum FrameKind {
-    FKInterp,
-    FKNative,
-  } kind;
-} StackFrame;
-
 extern struct ShadowStack {
   u32 depth;
-  StackFrame *top;
 } gs_shadow_stack;
 
 DEFINE_GC_TYPE(
@@ -24,6 +15,7 @@ DEFINE_GC_TYPE(
   NOGC(FIX), Closure, parent,
   GC(FIX, Raw), Image *, img,
   NOGC(FIX), u32, codeRef,
+  GC(FIX, Raw), Symbol *, assignedTo,
   NOGC(FIX), u32, capturec,
   GC(RSZ(capturec), Tagged), ValArray, captured
 );

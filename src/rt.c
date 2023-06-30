@@ -4,76 +4,38 @@
 #include "gc/gc.h"
 #include "bytecode/primitives.h"
 
+#include "./bytecode/tck.h"
+
 // for memcmp
 #include <string.h>
+
+Err gs_current_err;
 
 Err *gs_call(GS_CLOSURE_ARGS) {
   return self->call(self, argc, args, retc, rets);
 }
 
-#ifdef GS_C_STDIO
-static GS_CLOSURE(stdio_write) {
-  GS_CHECK_ARITY(1, 0);
-  FILE *file = ((struct GS_FOSClosure *) self)->file;
-  Bytes *slice = VAL2PTR(Bytes, args[0]);
-  fwrite(slice->bytes, 1, slice->len, file);
-  GS_RET_OK;
-}
-static GS_CLOSURE(stdio_flush) {
-  FILE *file = ((struct GS_FOSClosure *) self)->file;
-  GS_CHECK_ARITY(0, 0);
-  fflush(file);
-  GS_RET_OK;
-}
-OutStream gs__file_outstream(FILE *file, struct GS_FOSBuf *buf) {
-  *buf = (struct GS_FOSBuf) {
-    { { stdio_write }, file },
-    { { stdio_flush }, file },
-  };
-  return (OutStream) {
-    (Closure *) &buf->write,
-    (Closure *) &buf->flush,
-  };
-}
-#endif
-
-Err *gs_write_error(Err *err, OutStream *stream) {
-  Val arg;
-  Err *slow = err, *fast = err;
-  while (slow) {
-    Utf8Str msgHere;
-
-    arg = PTR2VAL_NOGC(&slow->file);
-    GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
-
-    char buf[64];
-    int size = snprintf(buf, sizeof(buf), " (%u): ", slow->line);
-    msgHere = (Utf8Str) { (u8 *) buf, (u32) size };
-    arg = PTR2VAL_NOGC(&msgHere);
-    GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
-
-    arg = PTR2VAL_NOGC(&slow->msg);
-    GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
-
-    msgHere = GS_UTF8_CSTR("\n");
-    arg = PTR2VAL_NOGC(&msgHere);
-    GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
-
-    if (fast) {
-      fast = fast->cause;
-      if (fast) {
-        fast = fast->cause;
-      }
-    }
-    if (slow == fast) {
-      msgHere = GS_UTF8_CSTR("  (cycle detected)\n");
-      GS_TRY(stream->write->call(stream->write, 1, &arg, 0, NULL));
-      break;
-    }
-    slow = slow->cause;
+void gs_write_error(Err *err) {
+  fprintf(stderr, BROWN "Uncaught exception" NONE ":");
+  if (err->exn != VAL_NIL) {
+    Val exn = err->exn;
+    fprintf(stderr, " ");
+    pr0(stderr, exn);
   }
-  GS_TRY(stream->flush->call(stream->flush, 0, NULL, 0, NULL));
-  GS_RET_OK;
+  fprintf(stderr, "\n");
+  u32 toPrint = err->len < GS_ERR_MAX_TRACE ? err->len : GS_ERR_MAX_TRACE;
+  for (u32 i = 0; i < toPrint; ++i) {
+    ErrFrame *frame = err->frames + i;
+    fprintf(stderr, "  " BROWN "at" NONE " " CYAN "%.*s" NONE " (%.*s:%" PRIu32 ")" ": %.*s\n",
+            frame->func.len, frame->func.bytes,
+            frame->file.len, frame->file.bytes,
+            frame->line,
+            frame->msg.len, frame->msg.bytes);
+  }
+  if (err->len > GS_ERR_MAX_TRACE) {
+    u32 omitted = err->len - GS_ERR_MAX_TRACE;
+    fprintf(stderr, "  " BROWN "at" NONE " ... (%" PRIu32 " omitted)\n", omitted);
+  }
 }
 
 #ifdef GS_C_ALLOC
@@ -127,17 +89,20 @@ Err *gs_alloc_sym_table(void) {
   GS_RET_OK;
 }
 
-GS_TOP_CLOSURE(STATIC, symbol_trap_closure) {
-  (void) self, (void) argc, (void) args, (void) retc, (void) rets;
-  Utf8Str name;
-  if (self == &symbol_trap_closure) {
-    name = GS_UTF8_CSTR("{direct}");
+GS_TOP_CLOSURE(STATIC, symbol_invoke_closure) {
+  Symbol *through = (Symbol *) ((u8 *) self - offsetof(Symbol, fn));
+  Val selfVal = through->value;
+  if (selfVal == PTR2VAL_GC(through)) {
+    Utf8Str name = GS_DECAY_BYTES(through->name);
+    (void) name;
+    LOG_ERROR("Undefined symbol called: %.*s", name.len, name.bytes);
+    GS_FAILWITH("Called an undefined symbol", NULL);
+  } else if (is_callable(selfVal)) {
+    Closure *selfF = VAL2PTR(Closure, selfVal);
+    return gs_call(selfF, argc, args, retc, rets);
   } else {
-    Symbol *through = (Symbol *) ((u8 *) self - offsetof(Symbol, fn));
-    name = GS_DECAY_BYTES(through->name);
+    GS_FAILWITH("Not a function", NULL);
   }
-  LOG_ERROR("Undefined symbol called: %.*s", name.len, name.bytes);
-  GS_FAILWITH("Called an undefined symbol", NULL);
 }
 
 Err *gs_intern(Utf8Str name, Symbol **out) {
@@ -165,8 +130,8 @@ Err *gs_intern(Utf8Str name, Symbol **out) {
   GS_TRY(gs_gc_alloc_array(STRING_TYPE, name.len, (anyptr *)&iName));
   memcpy(iName->bytes, name.bytes, name.len);
   *val = (Symbol) {
-    .fn = symbol_trap_closure,
-    .value = PTR2VAL_GC(&val->fn),
+    .fn = symbol_invoke_closure,
+    .value = PTR2VAL_GC(val),
     .name = iName,
     .isMacro = false,
   };

@@ -9,6 +9,42 @@
 #include "primitives_impl.c"
 #undef IMPL
 
+void pr0(anyptr fp, Val val) {
+  if (VAL_IS_FIXNUM(val)) {
+    fprintf(fp, "%" PRIu64, VAL2SFIX(val));
+  } else if (VAL_IS_GC_PTR(val)) {
+    switch (gs_gc_typeinfo(VAL2PTR(u8, val))) {
+    case SYMBOL_TYPE: {
+      Symbol *sym = VAL2PTR(Symbol, val);
+      fprintf(fp, "%.*s", sym->name->len, sym->name->bytes);
+      break;
+    }
+    case STRING_TYPE: {
+      InlineUtf8Str *str = VAL2PTR(InlineUtf8Str, val);
+      fprintf(fp, "\"%.*s\"", str->len, str->bytes);
+      break;
+    }
+    case CONS_TYPE: {
+      Cons *cons = VAL2PTR(Cons, val);
+      fprintf(fp, "(");
+      while (true) {
+        pr0(fp, cons->car);
+        if (cons->cdr == VAL_NIL) break;
+        fprintf(fp, " ");
+        cons = VAL2PTR(Cons, cons->cdr);
+      }
+      fprintf(fp, ")");
+      break;
+    }
+    default:
+      goto unprintable;
+    }
+  } else {
+  unprintable:
+    fprintf(fp, "<unprintable>");
+  }
+}
+
 Err *gs_add_primitives() {
   GS_FAIL_IF(!gs_global_gc, "No garbage collector", NULL);
 

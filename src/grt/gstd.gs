@@ -409,19 +409,5 @@
         false
         (car l))))
 
-(static-when
- racket
-
- (define (open-file file-name)
-   (local-require racket/base racket/port)
-   (box (call-with-input-file* file-name (λ (f) (port->list read-char f)))))
-
- (define (write-file file-name data)
-   (local-require racket/base racket/port)
-   (call-with-output-file*
-     file-name
-     (λ (f) (write-bytes data f))
-     #:exists 'replace)))
-
 (define (open-string str)
   (box (string->list str)))

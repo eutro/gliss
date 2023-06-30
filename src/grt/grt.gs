@@ -5,7 +5,7 @@
 ;; gstd linked before this
 
 ;; passes:
-;; read -> expand -> compile -> bytecomp
+;; read -> expand -> (eval) -> compile -> bytecomp
 
 ;; read a datum from a stream
 (define (read s)
@@ -165,7 +165,7 @@
                ((quote) (lambda ex-quote (quoted) (list 'quote quoted)))
                (else
                 (when-let (macro (symbol-macro-value hd))
-                          (comp expand macro)))))))
+                  (comp expand macro)))))))
     (if macro
         (apply macro (cdr list-form))
         (map-0 expand list-form))))
@@ -216,13 +216,14 @@
       (char? form)))
 
 (define (compile-call &env form &tail)
-  (foldr
-   (lambda (f &tail)
-     (compile &env f &tail))
-   (cons
-    `(call ~(dec (count form)))
-    &tail)
-   form))
+  (let ((&tail
+         (cons
+          `(call ~(dec (count form)))
+          &tail))
+        (compile-next
+         (lambda (f &tail)
+           (compile &env f &tail))))
+    (foldr compile-next &tail form)))
 
 (define (compile-begin &env forms &tail)
   (cond
@@ -377,11 +378,22 @@
    (list 'load var)
    &tail))
 
-(define (the-pipeline expr)
-  (compile
-   (empty-env)
-   (expand expr)
-   nil))
+(define (the-pipeline & exprs)
+  (let ((expanded
+         (map
+          (lambda (expr)
+            (let ((expanded-expr (expand expr)))
+              (eval expanded-expr)
+              expanded-expr))
+          exprs)))
+    (foldr
+     (lambda (expanded-expr &tail)
+       (compile
+        (empty-env)
+        expanded-expr
+        (cons '(drop) &tail)))
+     nil
+     expanded)))
 
 ;; bytecode writing
 

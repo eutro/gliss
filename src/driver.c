@@ -26,7 +26,16 @@ Err *gs_run_image(Image *img) {
   GS_TRY(gs_gc_push_scope());
   PUSH_DIRECT_GC_ROOTS(0, NULL);
 
-  GS_TRY_C(gs_call(&start->parent, 0, NULL, 1, &ret), POP_GC_ROOTS());
+  GS_TRY_C(gs_call(&start->parent, 0, NULL, 0, &ret), POP_GC_ROOTS());
+
+  Symbol *main;
+  GS_TRY(gs_intern(GS_UTF8_CSTR("main"), &main));
+  if (main->value == PTR2VAL_GC(main)) {
+    LOG_INFO("%s", "No main function defined");
+  } else {
+    GS_TRY_C(gs_call(&main->fn, 0, NULL, 1, &ret), POP_GC_ROOTS());
+  }
+
   LOG_DEBUG("%s", "Done, cleaning up");
 
   POP_GC_ROOTS();

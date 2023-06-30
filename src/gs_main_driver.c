@@ -25,9 +25,7 @@ int main(int argc, const char **argv) {
     err = gs_main0();
   }
   if (err) {
-    GS_FILE_OUTSTREAM(gs_stderr, stderr);
-    err = gs_write_error(err, &gs_stderr);
-    if (err) return 2;
+    gs_write_error(err);
     return 1;
   }
 }

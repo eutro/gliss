@@ -19,7 +19,7 @@
 #define LVLNO_TRACE 6
 
 #ifndef LOG_LEVEL
-#  define LOG_LEVEL LVLNO_TRACE
+#  define LOG_LEVEL LVLNO_DEBUG
 #endif
 
 #ifndef LOG_COLOUR

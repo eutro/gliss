@@ -45,21 +45,24 @@ function(add_gliss_image
     -f ${PROJECT_SOURCE_DIR}/src/grt/gstd.gs
     -f ${PROJECT_SOURCE_DIR}/src/grt/grt.gs
     -f ${PROJECT_SOURCE_DIR}/src/grt/link.gs
+    -e "'(main)'"
     -- ${CMAKE_CURRENT_BINARY_DIR}/${target_name}.gi
     ${ARGN}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     DEPENDS ${ARGN}
   )
+  add_custom_target(${target_name} DEPENDS ${target_name}.gi)
   add_custom_command(
     OUTPUT ${target_name}.c
     COMMAND embed_data ${target_name} ${target_name}.gi gs_main_data
-    DEPENDS ${target_name}.gi embed_data
+    DEPENDS embed_data ${target_name}.gi ${target_name}
   )
-  add_custom_target(${target_name} DEPENDS ${target_name}.c)
+  add_custom_target(${target_name}_c DEPENDS ${target_name}.c)
 endfunction()
 
 add_gliss_image(link_gi src/grt/gstd.gs src/grt/grt.gs src/grt/link.gs)
 add_executable(glissc src/image_driver.c link_gi.c)
+add_dependencies(glissc link_gi_c)
 target_link_libraries(glissc glissmainrt)
 
 add_executable(gldiss src/bin/gldiss.c)
