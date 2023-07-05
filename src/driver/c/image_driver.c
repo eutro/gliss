@@ -1,4 +1,4 @@
-#include "driver.c"
+#include "driver.h"
 
 extern const u8 *gs_main_data;
 extern const u32 gs_main_data_len;

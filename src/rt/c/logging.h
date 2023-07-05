@@ -19,17 +19,9 @@
 #define LVLNO_TRACE 6
 
 #ifndef LOG_LEVEL
-#include <stdlib.h>
-__attribute__((unused)) static int get_gs_log_level() {
-  static bool gs_log_level_init = false;
-  static int gs_log_level_level = 0;
-  if (!gs_log_level_init) {
-    char *ll = getenv("LOG_LEVEL");
-    gs_log_level_level = ll ? atoi(ll) : LVLNO_INFO;
-  }
-  return gs_log_level_level;
-}
-#  define LOG_LEVEL (get_gs_log_level())
+#define LOG_LEVEL_DYNAMIC
+int gs_get_log_level();
+#  define LOG_LEVEL (gs_get_log_level())
 #endif
 
 #ifndef LOG_COLOUR

@@ -1,7 +1,7 @@
-#include "../rt.h"
-#include "../bytecode/image.h"
-#include "../util/io.h"
-#include "../logging.h"
+#include "rt.h"
+#include "bytecode/image.h"
+#include "util/io.h"
+#include "logging.h"
 
 extern int gs_argc;
 extern const char **gs_argv;
