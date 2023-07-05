@@ -24,7 +24,7 @@
     (else (read-token s))))
 
 (define (read-all s)
-  (let ((nxt (read s)))
+  (let ((nxt (call-in-new-scope read s)))
     (if (eq? eof nxt)
         nil
         (cons nxt (read-all s)))))
@@ -61,6 +61,7 @@
          (cond
            ((= 1 (string-length char-str)) (string-ref char-str 0))
            ((string=? char-str "newline") #\newline)
+           ((string=? char-str "space") #\space)
            (else (raise (list "Unrecognised character" char-str))))))
       ((let ((c (string-ref tok 0)))
          (or (char-digit? c)
@@ -140,7 +141,7 @@
                       (let ((name (car binding))
                             (value (cdr binding)))
                         (when (not (symbol? name))
-                          (raise "Let binding must be a symbol"))
+                          (raise (list "Let binding must be a symbol" 'got: name)))
                         (cons name (map expand value))))
                     spec)
                    (map expand body))))
@@ -149,7 +150,7 @@
                   (let ((check-spec!
                          (lambda (x)
                            (when (not (symbol? x))
-                             (raise "Lambda parameter must be a symbol")))))
+                             (raise (list "Lambda parameter must be a symbol" 'got: x))))))
                     (cond
                       ((symbol? name-or-spec)
                        (let ((name name-or-spec)
@@ -160,7 +161,7 @@
                       ((list? name-or-spec)
                        (run! check-spec! name-or-spec)
                        (list* 'lambda name-or-spec (map expand body)))
-                      (else (raise "Lambda without parameter list"))))))
+                      (else (raise (list "Lambda without parameter list" 'form: list-form)))))))
                ((begin) false) ;; expands normally
                ((quote) (lambda ex-quote (quoted) (list 'quote quoted)))
                (else
@@ -169,9 +170,6 @@
     (if macro
         (apply macro (cdr list-form))
         (map-0 expand list-form))))
-
-(define (expand-0 expr)
-  (apply (symbol-macro-value (car expr)) (cdr expr)))
 
 (define (new-env parent captures-box)
   (-> empty-map
@@ -316,7 +314,8 @@
      (cons
       `(lambda ~capture-count ~lambda-insns)
       &tail)
-     captures)))
+     ;; these were collected in reverse
+     (reverse captures))))
 
 (define (compile-let &env form &tail)
   (compile-let* &env (cadr form) (cddr form) &tail))
@@ -378,14 +377,32 @@
    (list 'load var)
    &tail))
 
-(define (the-pipeline & exprs)
+(define (eval-0 expr)
+  (let (;; compile code
+        (code (compile (empty-env) expr nil))
+        (iw (new-image-writer))
+        (start (bytecomp! iw code))
+        (bv (new-bytevector 0))
+        (_ (image-writer->bytes iw bv))
+        (image-bytes (bytevector->bytestring bv))
+
+        ;; load code
+        (image (index-image (dbg image-bytes)))
+        (start-fn (image-code image start)))
+    (start-fn)))
+
+;; eval:
+;;   native on Racket
+;;   calls eval-0 in self-hosted runtime
+
+(define (compile-program & top-exprs)
   (let ((expanded
          (map
           (lambda (expr)
             (let ((expanded-expr (expand expr)))
               (eval expanded-expr)
               expanded-expr))
-          exprs)))
+          top-exprs)))
     (foldr
      (lambda (expanded-expr &tail)
        (compile
@@ -476,7 +493,7 @@
        (write-u32le! bv (arithmetic-shift cnst -30)))
       ((char? cnst)
        (write-u32le! bv const-direct)
-       (write-u32le! bv 3) ;; tag
+       (write-u32le! bv 2) ;; tag
        (write-u32le! bv (char->integer cnst)))
       ((symbol? cnst)
        (write-u32le! bv const-symbol)

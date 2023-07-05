@@ -27,10 +27,14 @@ Err *gs_main() {
     GS_FAIL_IF(4 != (u8 *) &GC_HEADER_TY(testHeader) - exampleHeader, "Wrong type offset", NULL);
 
     PTR_REF(u64, testHeader) = GC_BUILD_HEADER(5, 10, 15, 20);
-    GS_FAIL_IF(*exampleHeader != 5, "Wrong header value", NULL);
+    GS_FAIL_IF(*exampleHeader != 5, "Wrong header tag", NULL);
     GS_FAIL_IF(GC_HEADER_MARK(testHeader) != 10, "Wrong mark value", NULL);
     GS_FAIL_IF(GC_HEADER_GEN(testHeader) != 15, "Wrong gen value", NULL);
     GS_FAIL_IF(GC_HEADER_TY(testHeader) != 20, "Wrong type value", NULL);
+
+    PTR_REF(u64, testHeader) = FORWARDING_HEADER(12345678);
+    GS_FAIL_IF(*exampleHeader != HtForwarding, "Wrong header tag", NULL);
+    GS_FAIL_IF(READ_FORWARDED(testHeader) != (anyptr) 12345678, "Wrong forwarding pointer", NULL);
   }
 
   TypeIdx consIdx, arrayIdx;
@@ -67,7 +71,7 @@ Err *gs_main() {
     PTR2VAL_GC(pair3),
     PTR2VAL_GC(array),
   };
-  PUSH_DIRECT_GC_ROOTS(2, toPreserve);
+  PUSH_DIRECT_GC_ROOTS(2, top, toPreserve);
 
   GS_FAIL_IF_C(
     pair1 == pair2 ||
@@ -75,11 +79,11 @@ Err *gs_main() {
     pair3 == pair1,
     "Aliasing allocations",
     NULL,
-    POP_GC_ROOTS()
+    POP_GC_ROOTS(top)
   );
 
   GS_TRY(gs_gc_pop_scope());
-  POP_GC_ROOTS();
+  POP_GC_ROOTS(top);
 
   GS_RET_OK;
 }

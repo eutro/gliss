@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+option(GLISS_WITH_IO "Whether to build IO-using tests and binaries" ON)
+
 if(MSVC)
   add_compile_options(/W4)
 else()
@@ -30,7 +32,13 @@ add_library(glissmainrt
 )
 target_link_libraries(glissmainrt glissrt)
 
-add_executable(embed_data src/embed_data.c)
+if(CMAKE_CROSSCOMPILING)
+  find_package(GlissTools)
+else()
+  add_executable(embed_data src/embed_data.c)
+  export(TARGETS embed_data FILE
+    "${CMAKE_BINARY_DIR}/GlissToolsConfig.cmake")
+endif()
 
 function(add_gliss_image
     target_name
@@ -49,7 +57,11 @@ function(add_gliss_image
     -- ${CMAKE_CURRENT_BINARY_DIR}/${target_name}.gi
     ${ARGN}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS ${ARGN}
+    DEPENDS
+    ${ARGN}
+    ${PROJECT_SOURCE_DIR}/src/grt/gstd.gs
+    ${PROJECT_SOURCE_DIR}/src/grt/grt.gs
+    ${PROJECT_SOURCE_DIR}/src/grt/link.gs
   )
   add_custom_target(${target_name} DEPENDS ${target_name}.gi)
   add_custom_command(
@@ -60,12 +72,14 @@ function(add_gliss_image
   add_custom_target(${target_name}_c DEPENDS ${target_name}.c)
 endfunction()
 
-add_gliss_image(link_gi src/grt/gstd.gs src/grt/grt.gs src/grt/link.gs)
-add_executable(glissc src/image_driver.c link_gi.c)
-add_dependencies(glissc link_gi_c)
-target_link_libraries(glissc glissmainrt)
+if(GLISS_WITH_IO)
+  add_gliss_image(link_gi src/grt/gstd.gs src/grt/grt.gs src/grt/link.gs)
+  add_executable(glissc src/image_driver.c link_gi.c)
+  add_dependencies(glissc link_gi_c)
+  target_link_libraries(glissc glissmainrt)
 
-add_executable(gldiss src/bin/gldiss.c)
-target_link_libraries(gldiss glissmainrt)
+  add_executable(gldiss src/bin/gldiss.c)
+  target_link_libraries(gldiss glissmainrt)
+endif()
 
 add_subdirectory(test)

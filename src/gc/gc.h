@@ -253,7 +253,7 @@ typedef struct GcConfig {
 #define GC_DEFAULT_CONFIG \
   ((GcConfig) {           \
     .scopeCount = 32,     \
-    .miniPagec = 32,      \
+    .miniPagec = 1024,    \
   })
 
 /**
@@ -263,7 +263,8 @@ typedef struct GcRoots GcRoots;
 enum GcRootTag {
   GrDirect = 0,
   GrIndirect = 1,
-  GrSpecial = 2,
+  GrRaw = 2,
+  GrSpecial = 3,
 };
 struct GcRoots {
   /**
@@ -287,6 +288,15 @@ typedef struct GcRootsDirect {
       Val *arr;                                 \
     } arr[N];                                   \
   }
+/** Roots where multiple raw pointer arrays are referenced directly. */
+#define GcRootsRaw(N) struct {                  \
+    GcRoots parent;                             \
+    size_t len;                                 \
+    struct {                                    \
+      size_t len;                               \
+      anyptr *arr;                              \
+    } arr[N];                                   \
+  }
 typedef Err *(*MarkFn)(Val *toMark, anyptr closed);
 typedef Err *(*RootFn)(MarkFn mark, anyptr markClosed, anyptr closed);
 /** Roots where a callback is used to mark roots. */
@@ -296,23 +306,26 @@ typedef struct GcRootsSpecial {
   anyptr closed;
 } GcRootsSpecial;
 
-#define PUSH_GC_ROOTS(Type, tag)                                        \
-  Type gliss_gc_root;                                                   \
-  gliss_gc_root.parent.next = (GcRoots *) ((uptr) gs_global_gc->roots | tag); \
-  gs_global_gc->roots = &gliss_gc_root.parent
-#define PUSH_DIRECT_GC_ROOTS(size, arrIn)                  \
-  PUSH_GC_ROOTS(GcRootsDirect, GrDirect);                  \
-  gliss_gc_root.len = (size);                              \
-  gliss_gc_root.arr = (arrIn);
-#define PUSH_INDIRECT_GC_ROOTS(N)                          \
-  PUSH_GC_ROOTS(GcRootsIndirect(N), GrIndirect);           \
-  gliss_gc_root.len = (N)
-#define PUSH_SPECIAL_GC_ROOTS(fn, closed)                 \
-  PUSH_GC_ROOTS(GcRootsSpecial, GrSpecial);        \
-  gliss_gc_root.fn = (fn);                                \
-  gliss_gc_root.closed = (closed)
-#define POP_GC_ROOTS()                          \
-  gs_global_gc->roots = gliss_gc_root.parent.next
+#define PUSH_GC_ROOTS(Type, name, tag)                                  \
+  Type roots_##name;                                                    \
+  roots_##name.parent.next = (GcRoots *) ((uptr) gs_global_gc->roots | tag); \
+  gs_global_gc->roots = &roots_##name.parent
+#define PUSH_DIRECT_GC_ROOTS(size, name, arrIn) \
+  PUSH_GC_ROOTS(GcRootsDirect, name, GrDirect); \
+  roots_##name.len = (size);                    \
+  roots_##name.arr = (arrIn);
+#define PUSH_INDIRECT_GC_ROOTS(N, name)                 \
+  PUSH_GC_ROOTS(GcRootsIndirect(N), name, GrIndirect);  \
+  roots_##name.len = (N)
+#define PUSH_RAW_GC_ROOTS(N, name)                  \
+  PUSH_GC_ROOTS(GcRootsRaw(N), name, GrIndirect);   \
+  roots_##name.len = (N)
+#define PUSH_SPECIAL_GC_ROOTS(fn, name, closed)     \
+  PUSH_GC_ROOTS(GcRootsSpecial, name, GrSpecial);   \
+  roots_##name.fn = (fn);                           \
+  roots_##name.closed = (closed)
+#define POP_GC_ROOTS(name)                          \
+  gs_global_gc->roots = roots_##name.parent.next
 
 #define GS_GC_TRY(CALL) GS_TRY_C(CALL, POP_GC_ROOTS())
 #define GS_GC_TRY_MSG(CALL, MSG) GS_TRY_MSG_C(CALL, POP_GC_ROOTS())
@@ -377,6 +390,12 @@ Err *gs_gc_push_type(TypeInfo info, TypeIdx *outIdx);
  * Get the type info of a pointer managed by the garbage collector.
  */
 TypeIdx gs_gc_typeinfo(anyptr gcPtr);
+
+/**
+ * Force the next allocation to allocate as a LargeObject, which will
+ * not move in memory.
+ */
+void gs_gc_force_next_large();
 
 /**
  * Allocate an object of the given type with the garbage collector.

@@ -10,7 +10,7 @@
 
 #include <string.h> // memmove
 
-struct ShadowStack gs_shadow_stack;
+struct ShadowStack gs_shadow_stack = { 0, NULL };
 
 static Err *gs_interp_closure_call(GS_CLOSURE_ARGS);
 
@@ -27,21 +27,6 @@ Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argv, InterpClosu
 }
 
 #include "le_unaligned.h"
-
-static Err *alloc_list(Val *arr, u16 len, Val *out) {
-  Val *iter = arr + len - 1;
-  Val *end = arr - 1;
-  Val ret = VAL_NIL;
-  for (; iter != end; iter--) {
-    Val *pair;
-    GS_TRY(gs_gc_alloc(CONS_TYPE, (anyptr *)&pair));
-    pair[0] = *iter;
-    pair[1] = ret;
-    ret = PTR2VAL_GC(pair);
-  }
-  *out = ret;
-  GS_RET_OK;
-}
 
 void gs_stderr_dump_closure(InterpClosure *closure) {
   gs_stderr_dump_code(
@@ -101,7 +86,9 @@ static Err *gs_interp(
     }
     case SYM_DEREF: {
       Val symV = *--sp;
-      GS_FAIL_IF(!is_type(symV, SYMBOL_TYPE), "Not a symbol", NULL);
+      if (!is_type(symV, SYMBOL_TYPE)) {
+        GS_FAILWITH_VAL_MSG("Not a symbol", symV);
+      }
       Symbol *sym = VAL2PTR(Symbol, symV);
       LOG_TRACE("Dereferenced symbol: %.*s", sym->name->len, sym->name->bytes);
       *sp++ = sym->value;
@@ -109,7 +96,6 @@ static Err *gs_interp(
     }
     case LAMBDA: {
       InterpClosure *cls;
-      GS_TRY(gs_gc_alloc(INTERP_CLOSURE_TYPE, (anyptr *) &cls));
       u32 idx = read_u32(&ip);
       u16 arity = read_u16(&ip);
       sp -= arity;
@@ -157,7 +143,7 @@ static Err *gs_interp(
         GS_FAILWITH("Rest argument out of range", NULL);
       }
       u16 size = argc - (u16) arg;
-      GS_TRY(alloc_list(args + arg, size, sp));
+      GS_TRY(gs_alloc_list(args + arg, size, sp));
       sp++;
       break;
     }
@@ -179,23 +165,40 @@ static Err *gs_interp(
   }
 }
 
+void gs_interp_dump_stack() {
+  fprintf(stderr, GREEN "Stack trace" NONE ":\n");
+  for (struct StackFrame *frame = gs_shadow_stack.frame; frame; frame = frame->next) {
+    fprintf(stderr, "  " BROWN "at" NONE " " CYAN "%.*s" NONE "\n", frame->name.len, frame->name.bytes);
+  }
+}
+
 static Err *gs_interp_closure_call(GS_CLOSURE_ARGS) {
   InterpClosure *closureSelf = (InterpClosure *)self;
+  Utf8Str name = closureSelf->assignedTo
+    ? GS_DECAY_BYTES(closureSelf->assignedTo->name)
+    : GS_UTF8_CSTR("{unknown}");
+  struct StackFrame frame = {
+    name,
+    gs_shadow_stack.frame
+  };
+  gs_shadow_stack.frame = &frame;
   gs_shadow_stack.depth++;
+  //LOG_DEBUG("Called (%" PRIu32 "): %.*s", gs_shadow_stack.depth, name.len, name.bytes);
   Err *err = gs_interp(closureSelf, argc, args, retc, rets);
+  //LOG_DEBUG("Returned (%" PRIu32 "): %.*s", gs_shadow_stack.depth, name.len, name.bytes);
   gs_shadow_stack.depth--;
+  gs_shadow_stack.frame = frame.next;
   if (err) {
 #define FAIL                                            \
     GS_FAILWITH_FRAME(                                  \
       GS_ERR_FRAME(                                     \
         GS_UTF8_CSTR("lambda body"),                    \
-        closureSelf->assignedTo                         \
-        ? GS_DECAY_BYTES(closureSelf->assignedTo->name) \
-        : GS_UTF8_CSTR("{unknown}"),                    \
+        name,                                           \
         GS_UTF8_CSTR_DYN(GS_FILENAME),                  \
         __LINE__                                        \
       ),                                                \
-        err                                             \
+      PTR2VAL_NOGC(NULL),                               \
+      err                                               \
     )
     FAIL;
 #undef FAIL

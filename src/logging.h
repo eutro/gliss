@@ -19,7 +19,17 @@
 #define LVLNO_TRACE 6
 
 #ifndef LOG_LEVEL
-#  define LOG_LEVEL LVLNO_DEBUG
+#include <stdlib.h>
+__attribute__((unused)) static int get_gs_log_level() {
+  static bool gs_log_level_init = false;
+  static int gs_log_level_level = 0;
+  if (!gs_log_level_init) {
+    char *ll = getenv("LOG_LEVEL");
+    gs_log_level_level = ll ? atoi(ll) : LVLNO_INFO;
+  }
+  return gs_log_level_level;
+}
+#  define LOG_LEVEL (get_gs_log_level())
 #endif
 
 #ifndef LOG_COLOUR
@@ -61,36 +71,27 @@
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define LOG_FATAL(M, ...) do { fprintf(stderr, RED     "[FATAL] " "%s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); } while(0)
-#define LOG_ERROR(M, ...) do { fprintf(stderr, BROWN   "[ERROR] " "%s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); } while(0)
-#define LOG_WARN(M, ...)  do { fprintf(stderr, YELLOW  "[WARN]  " "%s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); } while(0)
-#define LOG_INFO(M, ...)  do { fprintf(stderr, GREEN   "[INFO]  " "%s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); } while(0)
-#define LOG_DEBUG(M, ...) do { fprintf(stderr, PURPLE  "[DEBUG] " "%s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); } while(0)
-#define LOG_TRACE(M, ...) do { fprintf(stderr, L_BLACK "[TRACE] " "%s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); } while(0)
+#define LOG_COLOUR_OF(LEVEL) LOG_COLOUR_##LEVEL
+#define LOG_IF_ENABLED(LEVEL, ...) do { if (LOG_ENABLED_##LEVEL) __VA_ARGS__ } while(0)
+#define LOG(LEVEL, M, ...) do { LOG_IF_ENABLED(LEVEL, fprintf(stderr, "" LOG_COLOUR_OF(LEVEL) "["#LEVEL"] %s (%s:%d) " M NONE "\n", __func__, FILENAME, __LINE__, __VA_ARGS__); ); } while(0)
 
-// LOG_LEVEL controls
-#if LOG_LEVEL < LVLNO_FATAL
-#  undef LOG_FATAL
-#  define LOG_FATAL(M, ...) while(0)
-#endif
-#if LOG_LEVEL < LVLNO_ERROR
-#  undef LOG_ERROR
-#  define LOG_ERROR(M, ...) while(0)
-#endif
-#if LOG_LEVEL < LVLNO_WARN
-#  undef LOG_WARN
-#  define LOG_WARN(M, ...) while(0)
-#endif
-#if LOG_LEVEL < LVLNO_INFO
-#  undef LOG_INFO
-#  define LOG_INFO(M, ...) while(0)
-#endif
-#if LOG_LEVEL < LVLNO_DEBUG
-#  undef LOG_DEBUG
-#  define LOG_DEBUG(M, ...) while(0)
-#endif
-#if LOG_LEVEL < LVLNO_TRACE
-#  undef LOG_TRACE
-#  define LOG_TRACE(M, ...) while(0)
-#endif
+#define LOG_ENABLED_FATAL (LVLNO_FATAL <= LOG_LEVEL)
+#define LOG_ENABLED_ERROR (LVLNO_ERROR <= LOG_LEVEL)
+#define LOG_ENABLED_WARN (LVLNO_WARN <= LOG_LEVEL)
+#define LOG_ENABLED_INFO (LVLNO_INFO <= LOG_LEVEL)
+#define LOG_ENABLED_DEBUG (LVLNO_DEBUG <= LOG_LEVEL)
+#define LOG_ENABLED_TRACE (LVLNO_TRACE <= LOG_LEVEL)
 
+#define LOG_COLOUR_FATAL RED
+#define LOG_COLOUR_ERROR BROWN
+#define LOG_COLOUR_WARN YELLOW
+#define LOG_COLOUR_INFO GREEN
+#define LOG_COLOUR_DEBUG PURPLE
+#define LOG_COLOUR_TRACE L_BLACK
+
+#define LOG_FATAL(M, ...) LOG(FATAL, M, __VA_ARGS__)
+#define LOG_ERROR(M, ...) LOG(ERROR, M, __VA_ARGS__)
+#define LOG_WARN(M, ...) LOG(WARN, M, __VA_ARGS__)
+#define LOG_INFO(M, ...) LOG(INFO, M, __VA_ARGS__)
+#define LOG_DEBUG(M, ...) LOG(DEBUG, M, __VA_ARGS__)
+#define LOG_TRACE(M, ...) LOG(TRACE, M, __VA_ARGS__)

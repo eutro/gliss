@@ -6,6 +6,7 @@
 #include "../logging.h"
 #include "interp.h"
 #include "tck.h"
+#include <ctype.h>
 
 extern int gs_argc;
 extern const char **gs_argv;

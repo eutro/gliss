@@ -17,7 +17,7 @@ static void dump_constant(Image *img, u32 idx) {
   case CList: eprintf("(CList)"); break;
   case CDirect: {
     struct ConstDirect *cd = (anyptr) ci;
-    eprintf("(CDirect) 0x%04lu",
+    eprintf("(CDirect) 0x%04" PRIu64,
             (u64) get32le(cd->lo) |
             ((u64) get32le(cd->hi) << 32));
     break;

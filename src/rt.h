@@ -22,7 +22,7 @@ typedef Bytes Utf8Str;
 typedef struct Err Err;
 
 #ifndef GS_ERR_MAX_TRACE
-#define GS_ERR_MAX_TRACE 128
+#define GS_ERR_MAX_TRACE 512
 #endif
 
 typedef struct ErrFrame {
@@ -48,24 +48,27 @@ extern Err gs_current_err;
     .line = (LINE) })
 #define GS_ERR_HERE(MSG)                        \
   ((ErrFrame) {                                 \
-    .msg = GS_UTF8_CSTR(MSG),                   \
+    .msg = GS_UTF8_CSTR_DYN(MSG),               \
     .func = GS_UTF8_CSTR(__func__),             \
     .file = GS_UTF8_CSTR_DYN(GS_FILENAME),      \
     .line = __LINE__ })
 
-#define GS_FAILWITH_FRAME(FRAME, CAUSE)                                 \
+#define GS_FAIL_HERE_DEFAULT(X) return (X)
+#define GS_FAIL_HERE(X) GS_FAIL_HERE_DEFAULT(X)
+#define GS_FAILWITH_FRAME(FRAME, EXN, CAUSE)                            \
   do {                                                                  \
     if (!CAUSE) {                                                       \
-      gs_current_err.exn = VAL_NIL;                                     \
       gs_current_err.len = 0;                                           \
+      gs_current_err.exn = (EXN);                                       \
     }                                                                   \
     if (gs_current_err.len < GS_ERR_MAX_TRACE) {                        \
       gs_current_err.frames[gs_current_err.len] = (FRAME);              \
     }                                                                   \
     gs_current_err.len++;                                               \
-    return &gs_current_err;                                             \
+    GS_FAIL_HERE(&gs_current_err);                                      \
   } while(0)
-#define GS_FAILWITH(MSG, CAUSE) GS_FAILWITH_FRAME(GS_ERR_HERE(MSG), CAUSE)
+#define GS_FAILWITH(MSG, CAUSE) GS_FAILWITH_FRAME(GS_ERR_HERE(MSG), PTR2VAL_NOGC(NULL), CAUSE)
+#define GS_FAILWITH_VAL_MSG(MSG, VAL) GS_FAILWITH_FRAME(GS_ERR_HERE(MSG), VAL, NULL)
 #define GS_FAILWITH_VAL(VAL)                    \
   do {                                          \
     gs_current_err.len = 0;                     \
@@ -92,7 +95,7 @@ extern Err gs_current_err;
 #define GS_TRY_MSG(CALL, MSG) GS_TRY_MSG_C(CALL, MSG, NO_CLEANUP)
 
 #define GS_TRY_C(CALL, CLEANUP) GS_TRY_MSG_C(CALL, #CALL, CLEANUP)
-#define GS_TRY(CALL) GS_TRY_C(CALL, NO_CLEANUP)
+#define GS_TRY(CALL) GS_TRY_MSG_C(CALL, #CALL, NO_CLEANUP)
 
 #define GS_RET_OK return NULL
 
@@ -101,7 +104,7 @@ extern Err gs_current_err;
 
 #define VAL_IS_FIXNUM(VAL) VAL_IS_TAG(VAL, 0)
 #define VAL2UFIX(VAL) ((ufix) (VAL) >> 2)
-#define VAL2SFIX(VAL) ((ifix) VAL2UFIX(VAL))
+#define VAL2SFIX(VAL) ((ifix) (VAL) >> 2)
 #define FIX2VAL(FIX) ((u64) (FIX) << 2)
 
 #define VAL_IS_PTR(VAL) (((VAL) & 1) != 0)
@@ -120,9 +123,9 @@ extern Err gs_current_err;
 #define VAL_NIL ((Val) 0x06) // 0b0110
 #define VAL_EOF ((Val) 0x08) // 0b1000
 
-#define VAL_IS_CHAR(VAL) (VAL_IS_CONST(VAL) && (((VAL) & 0xFFFB) == 0))
-#define VAL2CHAR(VAL) ((u32) ((ufix) (VAL) >> 4))
-#define CHAR2VAL(VAL) ((((Val) (VAL)) << 4) | 3)
+#define VAL_IS_CHAR(VAL) (VAL_IS_CONST(VAL) && (((VAL) & 0xFFFFFFFC) == 0))
+#define VAL2CHAR(VAL) ((u32) ((ufix) (VAL) >> 32))
+#define CHAR2VAL(VAL) ((((Val) (VAL)) << 32) | 2)
 
 typedef struct Closure Closure;
 #define GS_CLOSURE_ARGS Closure *self, u16 argc, Val *args, u16 retc, Val *rets

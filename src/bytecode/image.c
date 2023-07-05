@@ -60,6 +60,8 @@ Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
   // must be u32 aligned
   GS_FAIL_IF((size_t) buf % U32_ALIGN != 0, "bad alignment of buffer", NULL);
 
+  // ensure the allocated buffer does not move in memory, so internal pointers remain valid
+  gs_gc_force_next_large();
   GS_TRY(gs_gc_alloc_array(BYTESTRING_TYPE, len, (anyptr *)&ret->buf));
   memcpy(ret->buf->bytes, buf, len);
   buf = ret->buf->bytes;
@@ -79,6 +81,15 @@ Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
 
   u32 minCodeLen = 0;
 
+  Err *err;
+  if (false) {
+  failed:;
+    static char errBuf[32];
+    snprintf(errBuf, sizeof(errBuf), "byte index: %" PRIu32, rd.pos);
+    GS_FAILWITH(errBuf, err);
+  }
+#undef GS_FAIL_HERE
+#define GS_FAIL_HERE(X) err = (X); goto failed;
   while (rd.pos < rd.len) {
     GS_TRY_MSG(next_u32(&rd, &val), "section number");
     u32 section = get32le(val);
@@ -190,6 +201,8 @@ Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
       GS_FAILWITH("unrecognised section", NULL);
     }
   }
+#undef GS_FAIL_HERE
+#define GS_FAIL_HERE(X) GS_FAIL_HERE_DEFAULT(X)
 
   GS_FAIL_IF(minCodeLen > (!ret->codes ? 0 : ret->codes->len), "code reference out of bounds", NULL);
 
@@ -330,8 +343,8 @@ Err *gs_verify_code(Image *img, CodeInfo *ci) {
   StackMapEntry *smEnd = smIter + stackMapLen;
   u32 smIPos = smIter == smEnd ? 0 : get32le(smIter->pos);
   while (ip < end) {
-    while (smIter != smEnd && ip - start >= smIPos) {
-      GS_FAIL_IF(ip - start != smIPos, "Stack map entry is not instruction head", NULL);
+    while (smIter != smEnd && (u32) (ip - start) >= smIPos) {
+      GS_FAIL_IF((u32) (ip - start) != smIPos, "Stack map entry is not instruction head", NULL);
       u32 height = get32le(smIter->height);
       GS_FAIL_IF(!unreachable && stackSz != height, "Stack height mismatch", NULL);
       stackSz = height;
@@ -444,7 +457,10 @@ Err *gs_verify_code(Image *img, CodeInfo *ci) {
 
 Err *gs_bake_image(Image *img) {
   if (!img->constantsBaked) {
-    GS_TRY(gs_gc_alloc_array(ARRAY_TYPE, img->constants->len, (anyptr *)&img->constantsBaked));
+    anyptr constantsBaked;
+    GS_TRY(gs_gc_alloc_array(ARRAY_TYPE, img->constants->len, &constantsBaked));
+    GS_TRY(gs_gc_write_barrier(img, &img->constantsBaked, constantsBaked, FieldGcRaw));
+    img->constantsBaked = constantsBaked;
     memset(img->constantsBaked->values, 0, img->constants->len * sizeof(Val));
     for (u32 i = 0; i < img->constants->len; ++i) {
       Val out;
@@ -456,7 +472,14 @@ Err *gs_bake_image(Image *img) {
         )
       );
       if (VAL_IS_GC_PTR(out)) {
-        GS_TRY(gs_gc_write_barrier(img->constantsBaked, &img->constantsBaked->values[i], VAL2PTR(u8, out), FieldGcTagged));
+        GS_TRY(
+          gs_gc_write_barrier(
+            img->constantsBaked,
+            &img->constantsBaked->values[i],
+            VAL2PTR(u8, out),
+            FieldGcTagged
+          )
+        );
       }
       img->constantsBaked->values[i] = out;
     }

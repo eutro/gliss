@@ -1,15 +1,19 @@
 ;; racket -nyt ./gliss.rkt -f ./gstd.gs -f ./grt.gs -f ./link.gs -e "(main)" -- ./link.gi ./gstd.gs ./grt.gs ./link.gs
 
 (define (main)
-  (let ((src-exprs
-         (apply
+  (let ((prog-args (program-args))
+        (_ (when (or (nil? prog-args) (nil? (cdr prog-args)))
+             (raise "Usage: link <out-file> [in-files ...]")))
+        (src-exprs
+         (call-in-new-scope
+          apply
           concat
           (map
            (comp read-all open-file)
-           (cdr (program-args)))))
+           (cdr prog-args))))
         (iw (new-image-writer))
-        (start (bytecomp! iw (apply the-pipeline src-exprs)))
+        (start (bytecomp! iw (call-in-new-scope apply compile-program src-exprs)))
         (_ (image-writer-set-start! iw start))
         (bv (new-bytevector 0)))
     (image-writer->bytes iw bv)
-    (write-file (car (program-args)) (bytevector->bytestring bv))))
+    (write-file (car prog-args) (bytevector->bytestring bv))))

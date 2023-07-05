@@ -6,8 +6,13 @@
 #  define GS_STACK_MAX_DEPTH 10000
 #endif
 
+struct StackFrame {
+  Utf8Str name;
+  struct StackFrame *next;
+};
 extern struct ShadowStack {
   u32 depth;
+  struct StackFrame *frame;
 } gs_shadow_stack;
 
 DEFINE_GC_TYPE(
@@ -21,3 +26,5 @@ DEFINE_GC_TYPE(
 );
 
 Err *gs_interp_closure(Image *img, u32 codeRef, Val *args, u16 argc, InterpClosure **out);
+
+void gs_interp_dump_stack();

@@ -4,6 +4,7 @@
 #include "driver.h"
 #include "gc/gc.h"
 #include "logging.h"
+#include "rt.h"
 
 Err *gs_run_raw_image(u32 size, const u8 *buf) {
   Image *img;
@@ -14,32 +15,44 @@ Err *gs_run_raw_image(u32 size, const u8 *buf) {
 
 Err *gs_run_image(Image *img) {
   GS_TRY(gs_alloc_sym_table());
+
+  PUSH_RAW_GC_ROOTS(2, top);
+  roots_top.arr[0].len = 1;
+  roots_top.arr[0].arr = (anyptr *)&gs_global_syms;
+
   GS_TRY(gs_add_primitives());
 
-  GS_FAIL_IF(!img->start.code, "No start function", NULL);
-  InterpClosure *start;
-  GS_TRY(gs_interp_closure(img, img->start.code - 1, NULL, 0, &start));
-  Val ret;
+  if (img->start.code) {
+    InterpClosure *start;
+    GS_TRY(gs_interp_closure(img, img->start.code - 1, NULL, 0, &start));
 
-  LOG_DEBUG("%s", "Found start function, running");
+    LOG_INFO("%s", "Found start function, running");
 
-  GS_TRY(gs_gc_push_scope());
-  PUSH_DIRECT_GC_ROOTS(0, NULL);
-
-  GS_TRY_C(gs_call(&start->parent, 0, NULL, 0, &ret), POP_GC_ROOTS());
+    GS_TRY(gs_gc_push_scope());
+    PUSH_DIRECT_GC_ROOTS(0, start, NULL);
+    GS_TRY_C(gs_call(&start->parent, 0, NULL, 0, NULL), POP_GC_ROOTS(top));
+    POP_GC_ROOTS(start);
+    GS_TRY_C(gs_gc_pop_scope(), POP_GC_ROOTS(top));
+  } else {
+    LOG_INFO("%s", "No start function defined");
+  }
 
   Symbol *main;
   GS_TRY(gs_intern(GS_UTF8_CSTR("main"), &main));
   if (main->value == PTR2VAL_GC(main)) {
-    LOG_INFO("%s", "No main function defined");
+    LOG_INFO("%s", "No main symbol defined");
   } else {
-    GS_TRY_C(gs_call(&main->fn, 0, NULL, 1, &ret), POP_GC_ROOTS());
+    LOG_INFO("%s", "Found main symbol, calling");
+    GS_TRY(gs_gc_push_scope());
+    PUSH_DIRECT_GC_ROOTS(0, main, NULL);
+    Val ret;
+    GS_TRY_C(gs_call(&main->fn, 0, NULL, 1, &ret), POP_GC_ROOTS(top));
+    POP_GC_ROOTS(main);
+    GS_TRY_C(gs_gc_pop_scope(), POP_GC_ROOTS(top));
   }
 
-  LOG_DEBUG("%s", "Done, cleaning up");
+  LOG_INFO("%s", "Done");
 
-  POP_GC_ROOTS();
-  GS_TRY(gs_gc_pop_scope());
-
+  POP_GC_ROOTS(top);
   GS_RET_OK;
 }

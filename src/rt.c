@@ -1,4 +1,5 @@
 #include "rt.h"
+#include "gc/gc_type.h"
 #include "logging.h"
 
 #include "gc/gc.h"
@@ -17,7 +18,7 @@ Err *gs_call(GS_CLOSURE_ARGS) {
 
 void gs_write_error(Err *err) {
   fprintf(stderr, BROWN "Uncaught exception" NONE ":");
-  if (err->exn != VAL_NIL) {
+  if (!(VAL_IS_PTR(err->exn) && VAL2PTR(u8, err->exn) == NULL)) {
     Val exn = err->exn;
     fprintf(stderr, " ");
     pr0(stderr, exn);
@@ -101,7 +102,7 @@ GS_TOP_CLOSURE(STATIC, symbol_invoke_closure) {
     Closure *selfF = VAL2PTR(Closure, selfVal);
     return gs_call(selfF, argc, args, retc, rets);
   } else {
-    GS_FAILWITH("Not a function", NULL);
+    GS_FAILWITH_VAL_MSG("Not a function", selfVal);
   }
 }
 
@@ -148,7 +149,9 @@ Err *gs_intern(Utf8Str name, Symbol **out) {
     gs_gc_write_barrier(gs_global_syms, bucketP, newBucket, FieldGcRaw);
     *bucketP = bucket = newBucket;
   }
-  bucket->syms[bucket->len++] = val;
+  Symbol **target = bucket->syms + bucket->len++;
+  GS_TRY(gs_gc_write_barrier(bucket, target, val, FieldGcRaw));
+  *target = val;
   table->size++;
 
   *out = val;

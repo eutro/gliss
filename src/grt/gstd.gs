@@ -38,6 +38,14 @@
       (let ((v (f (car l))))
         (if v v (some f (cdr l))))))
 
+(define (identity x) x)
+
+(define (all f l)
+  (if (nil? l)
+      true
+      (let ((v (f (car l))))
+        (if v (all f (cdr l)) false))))
+
 (define (map f & ls)
   (if (some nil? ls)
       nil
@@ -411,3 +419,7 @@
 
 (define (open-string str)
   (box (string->list str)))
+
+;; debugging
+
+;; primitive: (debugger-suspend tag)

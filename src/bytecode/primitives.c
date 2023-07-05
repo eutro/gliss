@@ -6,14 +6,46 @@
 
 #define IMPL(NAME, C_NAME, ...)                 \
   GS_TOP_CLOSURE(STATIC, C_NAME) __VA_ARGS__
+#define EMIT 1
 #include "primitives_impl.c"
+#undef EMIT
 #undef IMPL
 
 void pr0(anyptr fp, Val val) {
   if (VAL_IS_FIXNUM(val)) {
-    fprintf(fp, "%" PRIu64, VAL2SFIX(val));
+    fprintf(fp, "%" PRIi64, VAL2SFIX(val));
+  } else if (VAL_IS_CONST(val)) {
+    switch (val) {
+    case VAL_NIL:
+      fprintf(fp, "nil");
+      break;
+    case VAL_TRUE:
+      fprintf(fp, "true");
+      break;
+    case VAL_FALSE:
+      fprintf(fp, "false");
+      break;
+    default:
+      if (VAL_IS_CHAR(val)) {
+        u32 c = VAL2CHAR(val);
+        switch (c) {
+        case '\n':
+          fprintf(fp, "#\\newline");
+          break;
+        case ' ':
+          fprintf(fp, "#\\space");
+          break;
+        default:
+          fprintf(fp, "#\\%c", (char) c); // :)
+        }
+        break;
+      } else {
+        goto unprintable;
+      }
+    }
   } else if (VAL_IS_GC_PTR(val)) {
-    switch (gs_gc_typeinfo(VAL2PTR(u8, val))) {
+    u32 ty;
+    switch (ty = gs_gc_typeinfo(VAL2PTR(u8, val))) {
     case SYMBOL_TYPE: {
       Symbol *sym = VAL2PTR(Symbol, val);
       fprintf(fp, "%.*s", sym->name->len, sym->name->bytes);
@@ -22,6 +54,21 @@ void pr0(anyptr fp, Val val) {
     case STRING_TYPE: {
       InlineUtf8Str *str = VAL2PTR(InlineUtf8Str, val);
       fprintf(fp, "\"%.*s\"", str->len, str->bytes);
+      break;
+    }
+    case BYTESTRING_TYPE: {
+      InlineBytes *bstr = VAL2PTR(InlineBytes, val);
+      fprintf(fp, "#\"");
+      u8 *iter = bstr->bytes;
+      u8 *end = bstr->bytes + bstr->len;
+      for (; iter != end; ++iter) {
+        if (isprint(*iter)) {
+          fprintf(fp, "%c", *iter);
+        } else {
+          fprintf(fp, "\\x%02" PRIx8, *iter);
+        }
+      }
+      fprintf(fp, "\"");
       break;
     }
     case CONS_TYPE: {
@@ -36,13 +83,37 @@ void pr0(anyptr fp, Val val) {
       fprintf(fp, ")");
       break;
     }
-    default:
-      goto unprintable;
+    case BOX_TYPE: {
+      Box *box = VAL2PTR(Box, val);
+      fprintf(fp, "(box ");
+      pr0(fp, box->value);
+      fprintf(fp, ")");
+      break;
+    }
+    default: {
+      TypeInfo *ti = &gs_global_gc->types[ty];
+      fprintf(fp, "<%.*s>", ti->name.len, ti->name.bytes);
+    }
     }
   } else {
   unprintable:
     fprintf(fp, "<unprintable>");
   }
+}
+
+Err *gs_alloc_list(Val *arr, u16 len, Val *out) {
+  Val *iter = arr + len - 1;
+  Val *end = arr - 1;
+  Val ret = VAL_NIL;
+  for (; iter != end; iter--) {
+    Val *pair;
+    GS_TRY(gs_gc_alloc(CONS_TYPE, (anyptr *)&pair));
+    pair[0] = *iter;
+    pair[1] = ret;
+    ret = PTR2VAL_GC(pair);
+  }
+  *out = ret;
+  GS_RET_OK;
 }
 
 Err *gs_add_primitives() {
@@ -64,8 +135,10 @@ Err *gs_add_primitives() {
   } while(0)
 #define ADD(SYM, CLS) ADD0(SYM, ALLOC_CLS(CLS), PTR2VAL_GC(cls))
 
-#define IMPL(NAME, C_NAME, ...) ADD(NAME, C_NAME)
+#define IMPL(NAME, C_NAME, ...) ADD(NAME, C_NAME);
+#define EMIT 0
 #include "primitives_impl.c"
+#undef EMIT
 #undef IMPL
 
   ADD0("eof",, VAL_EOF);

@@ -36,6 +36,7 @@
          symbol->bytestring
 
          program-args
+         call-in-new-scope
 
          raise dbg nil
          (rename-out
@@ -50,7 +51,10 @@
           [bytes-length bytestring-length]
           [bytes-copy! bytestring-copy!]
           [bytes-set! bytestring-set!]
-          [string->bytes/utf-8 string->bytestring]))
+          [string->bytes/utf-8 string->bytestring]
+
+          [void dbg-dump-gc]
+          [void dbg-suspend]))
 
 ;; implementation details
 (provide (rename-out
@@ -155,9 +159,12 @@
    (local-require racket/base racket/port)
    (box (call-with-input-file* file-name (λ (f) (port->list read-char f)))))
 
- (define (write-file file-name data)
-   (local-require racket/base racket/port)
-   (call-with-output-file*
-     file-name
-     (λ (f) (write-bytes data f))
-     #:exists 'replace))
+(define (write-file file-name data)
+  (local-require racket/base racket/port)
+  (call-with-output-file*
+    file-name
+    (λ (f) (write-bytes data f))
+    #:exists 'replace))
+
+(define (call-in-new-scope f . args)
+  (apply f args))
