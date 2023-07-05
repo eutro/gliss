@@ -8,8 +8,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-option(GLISS_WITH_IO "Whether to build IO-using tests and binaries" ON)
-
 if(MSVC)
   add_compile_options(/W4)
 else()
@@ -17,16 +15,15 @@ else()
 endif()
 
 if(EMSCRIPTEN)
-  set(GLISS_WITH_IO OFF)
   add_link_options(-sALLOW_MEMORY_GROWTH)
 endif()
 
 include(CTest)
 
-# If we can't perform IO, we need to import the native tools from elsewhere,
-# otherwise we don't have a compiler.
-if(NOT GLISS_WITH_IO)
-  find_package(GlissTools)
+# If we are cross-compiling, we need to import the native tools from
+# elsewhere, otherwise we don't have a compiler.
+if(CMAKE_CROSSCOMPILING)
+  find_package(GlissBuildTools)
 endif()
 
 # Create a ${target_name}_c target that builds a ${target_name}.c file which

@@ -23,7 +23,17 @@ target_link_libraries(glissc glissmainrt)
 
 add_gliss_executable(glissi gliss/interp.gs)
 
-export(
-  TARGETS embed_data glissc gldiss
-  FILE "${CMAKE_BINARY_DIR}/GlissToolsConfig.cmake"
+set(GLISS_TOOLS glissc gldiss glissi)
+set(GLISS_BUILD_TOOLS ${GLISS_TOOLS} embed_data)
+install(
+  TARGETS ${GLISS_TOOLS}
+  EXPORT GlissTools
+  RUNTIME DESTINATION bin
 )
+
+export(
+  TARGETS ${GLISS_BUILD_TOOLS}
+  FILE "${CMAKE_BINARY_DIR}/GlissBuildToolsConfig.cmake"
+)
+
+include(CPack)

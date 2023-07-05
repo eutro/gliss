@@ -1,7 +1,7 @@
 add_subdirectory(rt) # pure C runtime
 add_subdirectory(driver) # pure C extras for actual execution
 
-if(GLISS_WITH_IO)
+if(NOT CMAKE_CROSSCOMPILING)
   add_subdirectory(bin) # tools and new compiler
 endif()
 
