@@ -12,7 +12,10 @@ if(GLISS_WITH_IO)
   add_executable(grt_test grt_test.c)
   target_include_directories(grt_test PUBLIC ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(grt_test glissmainrt)
-  add_gliss_image(grt_gi ../src/grt/gstd.gs ../src/grt/grt.gs)
+  add_gliss_image(
+    TARGET grt
+    INPUTS ../src/grt/gstd.gs ../src/grt/grt.gs
+  )
   add_dependencies(grt_test grt_gi)
   add_test(NAME "Gliss Runtime" COMMAND grt_test)
 endif()
@@ -27,7 +30,10 @@ target_link_libraries(gc_test glissmainrt)
 add_test(NAME "Garbage Collector" COMMAND gc_test)
 
 function(add_gliss_test test_name test_camel_name)
-  add_gliss_image(${test_name}_gi ../src/grt/gstd.gs ./test_harness.gs ./${test_name}.gs ${ARGN})
+  add_gliss_image(
+    TARGET ${test_name}_gi
+    INPUTS ../src/grt/gstd.gs ./test_harness.gs ./${test_name}.gs ${ARGN}
+  )
   add_executable(gliss_${test_name} ../src/image_driver.c ${test_name}_gi.c)
   add_dependencies(gliss_${test_name} ${test_name}_gi_c)
   target_link_libraries(gliss_${test_name} glissmainrt)
