@@ -158,7 +158,7 @@ Err *gs_index_image(u32 len, const u8 *buf, Image **retP) {
         u32 stackMapLen = get32le(ci->stackMapLen);
         GS_FAIL_IF(stackMapLen > UINT32_MAX / 4, "integer overflow", NULL);
         GS_TRY_MSG(skipN(&rd, stackMapLen * 8), "code stack map");
-        Err *err = gs_verify_code(ret, ci);
+        err = gs_verify_code(ret, ci);
         if (err) {
           LOG_ERROR("Failed verification of code %" PRIu32, i);
           if (LOG_LEVEL >= LVLNO_ERROR) {

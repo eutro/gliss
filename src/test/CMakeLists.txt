@@ -1,7 +1,7 @@
 function(add_c_test test_name test_camel_name)
-  add_executable(${test_name} c/${test_name}.c)
-  target_link_libraries(${test_name} glissmainrt)
-  add_test(NAME "C ${test_camel_name}" COMMAND ${test_name})
+  add_executable(c_${test_name} c/${test_name}.c)
+  target_link_libraries(c_${test_name} glissmainrt)
+  add_test(NAME "C ${test_camel_name}" COMMAND c_${test_name})
 endfunction()
 
 function(add_gliss_test test_name test_camel_name)

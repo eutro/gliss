@@ -9,7 +9,7 @@ int gs_get_log_level() {
   static int level = 0;
   if (!init) {
     char *ll = getenv("LOG_LEVEL");
-    level = ll ? atoi(ll) : LVLNO_INFO;
+    level = ll ? atoi(ll) : LVLNO_WARN;
   }
   return level;
 }

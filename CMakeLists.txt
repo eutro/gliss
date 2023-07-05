@@ -16,6 +16,11 @@ else()
   add_compile_options(-Wall -Wextra)
 endif()
 
+if(EMSCRIPTEN)
+  set(GLISS_WITH_IO OFF)
+  add_link_options(-sALLOW_MEMORY_GROWTH)
+endif()
+
 include(CTest)
 
 # If we can't perform IO, we need to import the native tools from elsewhere,

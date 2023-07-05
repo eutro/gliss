@@ -64,16 +64,16 @@ void gs_gc_uninstall_signals() {
 }
 #define gs_gc_begin_if_failed_memory() safe_to_jump++; if (setjmp(segv_escape))
 #define gs_gc_end_if_failed_memory() safe_to_jump--;
+#define A_I_STR0(X) #X
+#define A_I_STR(X) A_I_STR0(X)
+#define ACCESS_INVALID(M) eprintf(RED "-- invalid memory access: %p (%s:"A_I_STR(__LINE__)") " M " --\n" NONE, segv_addr, FILENAME);
 #else
 #define gs_gc_install_signals()
 #define gs_gc_uninstall_signals()
 #define gs_gc_begin_if_failed_memory() if (false)
 #define gs_gc_end_if_failed_memory()
+#define ACCESS_INVALID(M)
 #endif
-
-#define A_I_STR0(X) #X
-#define A_I_STR(X) A_I_STR0(X)
-#define ACCESS_INVALID(M) eprintf(RED "-- invalid memory access: %p (%s:"A_I_STR(__LINE__)") " M " --\n" NONE, segv_addr, FILENAME);
 
 static bool dump_object(
   u8 *header,
