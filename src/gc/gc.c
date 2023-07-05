@@ -24,7 +24,7 @@ GcAllocator *gs_global_gc;
 
 // insert extra padding between GC objects, to detect heap corruption
 #ifndef GC_MIN_PADDING
-#  define GC_MIN_PADDING 8
+#  define GC_MIN_PADDING 0
 #endif
 
 #define LOG_GC_TRACE(...) LOG(GC_TRACE, __VA_ARGS__)
@@ -128,6 +128,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
     hdTag = HtNormal;
   } else {
     alloc_next_large = false;
+
     GS_FAIL_IF(align > alignof(u64), "Unsupported large object alignment", NULL);
     LargeObject *lo = gs_alloc(
       GS_ALLOC_ALIGN_SIZE(
@@ -140,6 +141,7 @@ static Err *gs_alloc_in_generation(u16 gen, u32 len, TypeIdx tyIdx, anyptr *out,
       // TODO major gc, retry
       GS_FAILWITH("OOM, couldn't allocate large object", NULL);
     }
+
     if ((lo->next = scope->largeObjects)) lo->next->prev = lo;
     lo->prev = NULL;
     scope->largeObjects = lo;
@@ -223,7 +225,7 @@ static Err *mark_ptr0(u8 **pointer, u16 dstGen, u16 minMoveGen) {
     break;
   }
   case HtLarge: {
-    LargeObject *lo = GC_LARGE_OBJECT(*pointer);
+    LargeObject *lo = GC_LARGE_OBJECT(header);
     u16 itsGeneration = lo->gen;
     if (itsGeneration > minMoveGen) {
       if (GC_HEADER_MARK(header) == CtUnmarked) {
@@ -625,7 +627,7 @@ Err *gs_gc_init(GcConfig cfg, GcAllocator *gc) {
 }
 
 void free_all_larges(Generation *scope) {
-  for (LargeObject *lo = scope->largeObjects; lo != NULL;) {
+  for (LargeObject *lo = scope->largeObjects; lo;) {
     LargeObject *nxt = lo->next;
     u8 *header = lo->data;
     TypeIdx ty = GC_HEADER_TY(header);

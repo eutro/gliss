@@ -387,8 +387,8 @@
         (image-bytes (bytevector->bytestring bv))
 
         ;; load code
-        (image (index-image (dbg image-bytes)))
-        (start-fn (image-code image start)))
+        (image (index-image image-bytes))
+        (start-fn (new-image-closure image start)))
     (start-fn)))
 
 ;; eval:
@@ -414,14 +414,10 @@
 
 ;; bytecode writing
 
-(define (write-zeros bv n)
-  (when (> n 0)
-    (bytevector-push! bv 0)
-    (write-zeros bv (dec n))))
 (define (write-padding-off! bv off)
   (let ((dist-to-four (- (modulo (+ off (bytevector-length bv)) -4))))
     (bytevector-ensure! bv dist-to-four)
-    (write-zeros bv dist-to-four)))
+    (bytevector-set-len! bv (+ (bytevector-length bv) dist-to-four))))
 (define (write-padding! bv)
   (write-padding-off! bv 0))
 

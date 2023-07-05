@@ -90,7 +90,7 @@ Err *gs_alloc_sym_table(void) {
   GS_RET_OK;
 }
 
-GS_TOP_CLOSURE(STATIC, symbol_invoke_closure) {
+GS_TOP_CLOSURE(PUBLIC, symbol_invoke_closure) {
   Symbol *through = (Symbol *) ((u8 *) self - offsetof(Symbol, fn));
   Val selfVal = through->value;
   if (selfVal == PTR2VAL_GC(through)) {

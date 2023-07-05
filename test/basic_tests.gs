@@ -5,6 +5,7 @@
  (assert-eq? (+ 1 1) 2)
  (assert-eq? (- 1) -1)
  (assert-eq? ((comp - - + - + -) 1) 1)
+ (assert-eq? (- 5 2) 3)
 
  (assert-eq? (let ((f
                     (comp
@@ -19,6 +20,12 @@
  (assert-eq? (modulo 10 -3) -2)
  (assert-eq? (modulo -10 -3) -1)
 
+ (assert-eq? (- (modulo 41 -4)) 3)
+ (assert-eq? (modulo 12 -4) 0)
+
+ (assert-eq? (dec 4) 3)
+ (assert-eq? (dec 0) -1)
+
  (assert-eq? 65 (char->integer #\A))
  (assert-eq? 10 (char->integer #\newline))
  (assert-eq? 32 (char->integer #\space))
@@ -32,6 +39,12 @@
                   (partial map eq?))
             '(1 2 3)
             (list 1 2 3))
+
+ (assert-eq? 1 (count '(5)))
+ (assert-eq? 0 (count '()))
+
+ (assert-eq? 4 (arithmetic-shift 1 2))
+ (assert-eq? (bitwise-and 4 255) 4)
 
  ;;
  )

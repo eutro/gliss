@@ -245,6 +245,7 @@ DEFINE_GC_TYPE(
 );
 
 extern SymTable *gs_global_syms;
+extern Closure symbol_invoke_closure;
 
 u64 gs_hash_bytes(Bytes bytes);
 int gs_bytes_cmp(Bytes lhs, Bytes rhs);

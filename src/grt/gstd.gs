@@ -213,7 +213,7 @@
 (define else true)
 
 (defmacro (case arg & cases)
-  (let ((nm (gensym)))
+  (let ((nm (gensym "nm")))
     `(let ((~nm ~arg))
        (cond
          ~@(map
@@ -264,11 +264,13 @@
   (enumerate-from 0 xs))
 
 (define (count xs)
-  ((lambda recur (n xs)
-     (if xs
-         (recur (+ n 1) (cdr xs))
-         n))
-   0 xs))
+  (if (list? xs)
+      ((lambda recur (n xs)
+         (if xs
+             (recur (inc n) (cdr xs))
+             n))
+       0 xs)
+      (raise (list "Not a list" xs))))
 
 (define (reverse xs)
   ((lambda recur (xs tl)
@@ -344,11 +346,15 @@
       (else bytes))))
 
 (define (list->bytestring ls)
-  (let ((bs (new-bytestring (count ls))))
+  (let ((cnt (count ls))
+        (_ (when (eq? 0 cnt)
+             (dbg-suspend ls)
+             (count ls)))
+        (bs (new-bytestring cnt)))
     ((lambda recur (i ls)
        (when ls
          (bytestring-set! bs i (car ls))
-         (recur (+ i 1) (cdr ls))))
+         (recur (inc i) (cdr ls))))
      0 ls)
     bs))
 

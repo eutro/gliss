@@ -64,6 +64,20 @@ IMPL("symbol-set-macro!", symbol_set_macro)
 }
 #endif
 
+IMPL("string->bytestring", string_to_bytestring)
+#if EMIT
+{
+  GS_CHECK_ARITY(1, 1);
+  GS_FAIL_IF(!is_type(args[0], STRING_TYPE), "Not a string", NULL);
+  InlineUtf8Str *str = VAL2PTR(InlineUtf8Str, args[0]);
+  InlineBytes *bs;
+  GS_TRY(gs_gc_alloc_array(BYTESTRING_TYPE, str->len, (anyptr *)&bs));
+  memcpy(bs->bytes, str->bytes, str->len);
+  rets[0] = PTR2VAL_GC(bs);
+  GS_RET_OK;
+}
+#endif
+
 IMPL("symbol->bytestring", symbol_to_bytestring)
 #if EMIT
 {
@@ -72,7 +86,7 @@ IMPL("symbol->bytestring", symbol_to_bytestring)
   Symbol *sym = VAL2PTR(Symbol, args[0]);
   InlineBytes *bs;
   GS_TRY(gs_gc_alloc_array(BYTESTRING_TYPE, sym->name->len, (anyptr *)&bs));
-  memcpy(bs->bytes, sym->name, sym->name->len);
+  memcpy(bs->bytes, sym->name->bytes, sym->name->len);
   rets[0] = PTR2VAL_GC(bs);
   GS_RET_OK;
 }
@@ -206,6 +220,7 @@ IMPL("apply", apply)
     arglist = PTR_REF(Cons, VAL2PTR(u8, arglist)).cdr;
   }
 
+  // maybe alloca instead?
   Val *buf = gs_alloc(GS_ALLOC_META(Val, totalArgc));
   memcpy(buf, args + 1, (argc - 2) * sizeof(Val));
 
@@ -217,7 +232,9 @@ IMPL("apply", apply)
     arglistP = VAL2PTR(u8, PTR_REF(Cons, arglistP).cdr);
   }
 
-  return gs_call(&PTR_REF(Closure, VAL2PTR(u8, firstArg)), totalArgc, buf, retc, rets);
+  Err *res = gs_call(&PTR_REF(Closure, VAL2PTR(u8, firstArg)), totalArgc, buf, retc, rets);
+  gs_free(buf, GS_ALLOC_META(Val, totalArgc));
+  return res;
 }
 #endif
 
@@ -323,13 +340,13 @@ IMPL("bytestring-set!", bytestring_set)
   Val bs = args[0];
   Val idx = args[1];
   Val value = args[2];
-  GS_FAIL_IF(!is_type(bs, BYTESTRING_TYPE), "Not a bytestring", NULL);
-  GS_FAIL_IF(!VAL_IS_FIXNUM(idx), "Not a number", NULL);
-  GS_FAIL_IF(!VAL_IS_FIXNUM(value), "Not a number", NULL);
+  FAIL_IF_LIST(!is_type(bs, BYTESTRING_TYPE), "Not a bytestring", bs, idx, value);
+  FAIL_IF_LIST(!VAL_IS_FIXNUM(idx), "Not a number", bs, idx, value);
+  FAIL_IF_LIST(!VAL_IS_FIXNUM(value), "Not a number", bs, idx, value);
   InlineBytes *bsP = VAL2PTR(InlineBytes, bs);
   u64 idxV = VAL2UFIX(idx);
   u64 valueB = VAL2UFIX(value);
-  GS_FAIL_IF(idxV >= bsP->len, "Index out of bounds", NULL);
+  FAIL_IF_LIST(idxV >= bsP->len, "Index out of bounds", bs, idx, value);
   bsP->bytes[idxV] = (u8) valueB;
   rets[0] = VAL_NIL;
   GS_RET_OK;
@@ -515,7 +532,7 @@ IMPL("-", fx_sub)
   if (argc == 1) {
     val = -val;
   } else {
-    for (u32 i = 0; i < argc; ++i) {
+    for (u32 i = 1; i < argc; ++i) {
       Val x = args[i];
       GS_FAIL_IF(!VAL_IS_FIXNUM(x), "Not a number", NULL);
       val -= VAL2SFIX(x);
@@ -566,15 +583,13 @@ IMPL("modulo", fx_mod)
   GS_FAIL_IF(n == 0, "Division by zero", NULL);
   // we want this to return with the same sign as n, so
   i64 res;
-  if (a == 0) {
-    res = 0;
-  } if ((a < 0) ^ (n < 0)) {
+  if ((a < 0) ^ (n < 0)) {
     // different signs
 
-    //         vv same sign as n
-    res = n - (-a % n);
-    //        ^^^^^^^^ same sign as n, but (clearly) the wrong answer
-    //      ^ negation modulo n (RHS is non-zero)
+    //          vv same sign as n
+    res = (n - (-a % n)) % n;
+    //         ^^^^^^^^ same sign as n, but (clearly) the wrong answer
+    //       ^ negation modulo n
   } else {
     // a has the same sign as n, use the easy case of C99 remainder
     res = a % n;
@@ -679,12 +694,12 @@ IMPL("string->number", string_to_number)
 #if EMIT
 {
   GS_CHECK_ARITY(1, 1);
-  Val str = args[0];
-  GS_FAIL_IF(!is_type(str, STRING_TYPE), "Not a string", NULL);
-  InlineUtf8Str *strV = VAL2PTR(InlineUtf8Str, str);
+  Val strV = args[0];
+  GS_FAIL_IF(!is_type(strV, STRING_TYPE), "Not a string", NULL);
+  InlineUtf8Str *str = VAL2PTR(InlineUtf8Str, strV);
 
-  char *it = (char *) strV->bytes;
-  char *end = it + strV->len;
+  char *it = (char *) str->bytes;
+  char *end = it + str->len;
   GS_FAIL_IF(it == end, "Empty string", NULL);
   i8 sign = 1;
   if (*it == '-' || *it == '+') {
@@ -700,6 +715,7 @@ IMPL("string->number", string_to_number)
     hasDigits = true;
     u64 newVal = absVal * 10 + (*it - '0');
     GS_FAIL_IF(newVal < absVal, "Integer literal too large", NULL);
+    absVal = newVal;
   }
 
   GS_FAIL_IF(!hasDigits, "No digits", NULL);
@@ -732,12 +748,12 @@ IMPL("open-file", open_file)
   GS_CHECK_ARITY(1, 1);
   Val file = args[0];
   GS_FAIL_IF(!is_type(file, STRING_TYPE), "Not a string", NULL);
+
   InlineUtf8Str *utfFile = VAL2PTR(InlineUtf8Str, file);
   char *str = gs_alloc(GS_ALLOC_META(char, utfFile->len + 1));
   GS_FAIL_IF(!str, "Failed allocation", NULL);
   memcpy(str, utfFile->bytes, utfFile->len + 1);
   str[utfFile->len] = 0;
-
   FILE *fp = fopen(str, "r");
   gs_free(str, GS_ALLOC_META(char, utfFile->len + 1));
   GS_FAIL_IF(!fp, "Could not open file", NULL);
@@ -780,6 +796,33 @@ IMPL("open-file", open_file)
   fclose(fp);
 
   return gs_call(&box, 1, &ret, 1, rets);
+}
+#endif
+
+IMPL("write-file", write_file)
+#if EMIT
+{
+  GS_CHECK_ARITY(2, 1);
+  Val nameV = args[0];
+  Val bytesV = args[1];
+  FAIL_IF_LIST(!is_type(nameV, STRING_TYPE), "Not a string", bytesV);
+  FAIL_IF_LIST(!is_type(bytesV, BYTESTRING_TYPE), "Not a bytestring", bytesV);
+
+  InlineUtf8Str *utfFile = VAL2PTR(InlineUtf8Str, nameV);
+  char *str = gs_alloc(GS_ALLOC_META(char, utfFile->len + 1));
+  GS_FAIL_IF(!str, "Failed allocation", NULL);
+  memcpy(str, utfFile->bytes, utfFile->len + 1);
+  str[utfFile->len] = 0;
+  FILE *fp = fopen(str, "w");
+  gs_free(str, GS_ALLOC_META(char, utfFile->len + 1));
+  GS_FAIL_IF(!fp, "Could not open file", NULL);
+
+  InlineBytes *bytes = VAL2PTR(InlineBytes, bytesV);
+  size_t written = fwrite(bytes->bytes, 1, bytes->len, fp);
+  fclose(fp);
+  GS_FAIL_IF(written != bytes->len, "Error writing to file", NULL);
+
+  GS_RET_OK;
 }
 #endif
 
@@ -847,6 +890,43 @@ IMPL("index-image", index_image)
   Image *img;
   GS_TRY(gs_index_image(bs->len, bs->bytes, &img));
   rets[0] = PTR2VAL_GC(img);
+  GS_RET_OK;
+}
+#endif
+
+IMPL("new-image-closure", new_image_closure)
+#if EMIT
+{
+  (void) self;
+  GS_CHECK_RET_ARITY(1);
+  GS_FAIL_IF(argc < 2, "Not enough arguments", NULL);
+  Val imgV = args[0];
+  Val idxV = args[1];
+  FAIL_IF_LIST(!is_type(imgV, IMAGE_TYPE), "Not an image", imgV);
+  FAIL_IF_LIST(!VAL_IS_FIXNUM(idxV), "Not a number", idxV);
+  Image *img = VAL2PTR(Image, imgV);
+  u64 idx = VAL2UFIX(idxV);
+  FAIL_IF_LIST(!img->codes || idx >= img->codes->len, "Code out of range", imgV, idxV);
+  InterpClosure *cls;
+  GS_TRY(gs_interp_closure(img, (u32) idx, args + 2, argc - 2, &cls));
+  rets[0] = PTR2VAL_GC(cls);
+  GS_RET_OK;
+}
+#endif
+
+IMPL("gensym", gensym)
+#if EMIT
+{
+  GS_CHECK_ARITY(1, 1);
+  Val nameV = args[0];
+  GS_FAIL_IF(!is_type(nameV, STRING_TYPE), "Not a string", NULL);
+  Symbol *uninterned;
+  GS_TRY(gs_gc_alloc(SYMBOL_TYPE, (anyptr *)&uninterned));
+  uninterned->fn = symbol_invoke_closure;
+  uninterned->value = PTR2VAL_GC(uninterned);
+  uninterned->name = VAL2PTR(InlineUtf8Str, nameV);
+  uninterned->isMacro = false;
+  rets[0] = PTR2VAL_GC(uninterned);
   GS_RET_OK;
 }
 #endif
