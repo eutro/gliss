@@ -35,7 +35,7 @@ function(add_gliss_embedded
   )
   add_custom_command(
     OUTPUT ${target_name}.c
-    COMMAND embed_data ${target_name} ${source_name} gs_main_data
+    COMMAND embed_data ${target_name}.c ${source_name} gs_main_data
     DEPENDS embed_data ${source_name} ${ARGN}
   )
   add_custom_target(${target_name}_c DEPENDS ${target_name}.c)
